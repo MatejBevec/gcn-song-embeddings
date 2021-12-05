@@ -1,0 +1,9 @@
+*.pt
+*.mp3
+*.jpg
+*.JPG
+__pycache__
+*.cache
+/baselines/emb/*
+dataset_*/features_*
+!/runs/*/state.pt
