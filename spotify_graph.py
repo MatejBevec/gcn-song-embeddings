@@ -26,7 +26,6 @@ class SpotifyGraph():
         with open(self.graph_pth, "r", encoding="utf-8") as f:
             self.graph = json.load(f)
         
-        print("Loading node features...")
         # todo: check if all nodes have features
         # todo: load batches into memory instead of whole dataset
         self.ft_dir = features_dir
@@ -52,9 +51,12 @@ class SpotifyGraph():
         to_nodes = [ index_map[e["to"]] for e in self.graph["edges"]]
 
         g.add_edges(from_nodes, to_nodes)
+        # BUG: why is this a DGLHeterorgraph??
 
         if self.ft_dir:
-            for fn in os.listdir(self.ft_dir):
+            print("Loading node features...")
+            for i,fn in enumerate(os.listdir(self.ft_dir)):
+                print(f"{i} done") if i % 1000 == 0 else None
                 node_id = fn.rsplit('.')[0]
                 self.features_dict[node_id] = torch.load(os.path.join(self.ft_dir, fn))
             features = torch.stack(list(self.features_dict.values()), dim=0)
@@ -87,7 +89,19 @@ class SpotifyGraph():
 
 if __name__ == "__main__":
 
-    dataset = SpotifyGraph("./dataset_mini", "./dataset_mini/features_mfcc")
-    g, track_ids, col_ids, _ = dataset.to_dgl_graph()
+    dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
+    g, track_ids, col_ids, features = dataset.to_dgl_graph()
+    positives = dataset.load_positives("./dataset_micro/positives.json")
 
-    positives = dataset.load_positives("./dataset_mini/positives.json")
+    dataset2 = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
+    g2, track_ids2, col_ids2, features2 = dataset.to_dgl_graph()
+    positives2 = dataset2.load_positives("./dataset_micro/positives.json")
+
+    print(track_ids[0:10])
+    print(track_ids2[0:10])
+
+    print(features[0:10, :5])
+    print(features2[0:10, :5])
+
+    print(positives[0:10, :])
+    print(positives2[0:10, :])

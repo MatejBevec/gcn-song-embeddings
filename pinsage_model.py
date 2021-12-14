@@ -32,6 +32,10 @@ def put_embeddings(h, nodeset, nodeset_new_h):
     pad_cols = new_h.shape[1] - nodeset_new_h.shape[1]
     pad_rows = nodeset.shape[0]
     new_h[nodeset, :] = torch.cat([nodeset_new_h, torch.zeros(pad_rows, pad_cols)], 1)
+    # print(nodeset_new_h.shape)
+    # print(new_h.shape)
+    # print(nodeset_new_h[0,:])
+    # print()
     return new_h
 
 def do_random_walks(g, nodeset, n_hops, alpha):
@@ -174,7 +178,12 @@ class ConvLayer(nn.Module):
         self.hidden_dim = hidden_dim    # neighbor aggregate dim
 
         self.Q = nn.Linear(in_dim, hidden_dim) # NN layer for every neighbor pre-aggregation (m)
+        torch.nn.init.xavier_uniform_(self.Q.weight)
+        self.Q.bias.data.fill_(0.01)
+
         self.W = nn.Linear(in_dim + hidden_dim, out_dim) # NN layer post-aggregation (d)
+        torch.nn.init.xavier_uniform_(self.W.weight)
+        self.W.bias.data.fill_(0.01)
 
     def forward(self, h, nodeset, nb_nodes, nb_weights):
         
@@ -225,7 +234,11 @@ class PinSageModel(nn.Module):
                 ConvLayer(self.in_dim_per_layer[i], self.out_dim, self.hidden_dim))
 
         self.G1 = nn.Linear(self.out_dim, self.out_dim)
-        self.G2 = nn.Linear(self.out_dim, self.out_dim)
+        torch.nn.init.xavier_uniform_(self.G1.weight)
+        self.G1.bias.data.fill_(0.01)
+
+        self.G2 = nn.Linear(self.out_dim, self.out_dim, bias=False)
+        torch.nn.init.xavier_uniform_(self.G2.weight)
 
     def forward(self, initial_h, nodeset):
         
@@ -236,6 +249,8 @@ class PinSageModel(nn.Module):
         h = initial_h
         t2 = time.time()
         #print("t:", t2-t1)
+
+        # print(h[nodeset,:][0,:64])
 
         for i, (nodeset, nb_weights, nb_nodes) in enumerate(relevant_nodes):
             nodeset_new_h = self.conv_layers[i](h, nodeset, nb_nodes, nb_weights)
@@ -254,7 +269,9 @@ class PinSageModel(nn.Module):
 
 if __name__ == "__main__":
 
-    dataset = SpotifyGraph("./dataset_mini", "./dataset_mini/features_mfcc")
+    print("hell")
+
+    dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
 
     batch_size = 128
@@ -276,11 +293,18 @@ if __name__ == "__main__":
     alpha = 0.85
     T = 3
 
-    nbhds = precompute_neighborhoods_topt(g, n_items, n_hops, alpha, DEF_T_PRECOMP, "./neighborhoods.pt")
+    nbhds = precompute_neighborhoods_topt(g, n_items, n_hops, alpha, DEF_T_PRECOMP, "./neighborhoods_micro.pt")
     pinsage_conv = PinSageModel(g, n_items, n_layers, dimensions, n_hops, alpha, T, nbhds)
-    output = pinsage_conv(initial_h, nodeset)
-    #print(output[0:5, 0:5])
 
-    #print([item[0] for item in relevant_nodes])
+    nodeflow = relevant_nodes_per_layer_precomp(nodeset, 2, T, nbhds)
 
-    #precompute_neighborhoods_topt(g, n_items, n_hops=100, alpha=0.85, T=10)
+    nodes, w, nb = nodeflow[0]
+    track_info = dataset.tracks
+    for i in range(0, 10):
+        q_id = track_ids[nodes[i]]
+        first_id = track_ids[nb[i,0]]
+        second_id = track_ids[nb[i,1]]
+        print(track_info[q_id]["name"] + " - " + track_info[q_id]["artist"])
+        print(track_info[first_id]["name"] + " - " + track_info[first_id]["artist"])
+        print(track_info[second_id]["name"] + " - " + track_info[second_id]["artist"])
+        print()

@@ -12,7 +12,7 @@ from torch.nn.modules.activation import Tanh
 import torchvision
 import matplotlib.pyplot as plt
 from torchvision.io.image import ImageReadMode
-from pinsage_code.baselines import EmbLoader
+from baselines import EmbLoader, Node2Vec
 
 
 from spotify_graph import SpotifyGraph
@@ -20,7 +20,7 @@ import pinsage_model as psm
 import pinsage_training as pst
 
 from baselines import PredictionModel, EmbeddingModel, \
-    Snore, MFCC, PersPageRank, PinSage
+    Snore, PersPageRank, EmbLoader
 
 PRECOMP_K = 1000
 KNN_DIR = "./baselines/knn"
@@ -28,10 +28,11 @@ EMB_DIR = "./baselines/emb"
 
 MODELS = {
     "Snore": Snore(),
-    #"MFCC": MFCC(),
+    "node2vec": Node2Vec(),
     "PageRank": PersPageRank(),
-    "PinSage": EmbLoader("runs/micro/emb"),
-    "PinSageHN": EmbLoader("runs/micro3/emb")
+    "PinSageHN": EmbLoader("runs/micro3/emb"),
+    "PinSageL3": EmbLoader("runs/micro_openl3/emb"),
+    "OpenL3": EmbLoader("dataset_micro/features_openl3")
 }
 
 # GOTTA TRAIN FIRST!
@@ -156,7 +157,7 @@ def knn_from_sim(sim, q, K):
 
 
 def hit_rate(knn_mat, test_positives, K):
-    # return vector/dict of hit_rate for every model
+    # return vector/dict of hit_rate given kNN list
     n = test_positives.shape[0]
     hits = 0
     for i in range(n):
@@ -169,7 +170,7 @@ def hit_rate(knn_mat, test_positives, K):
     return hits / n
 
 def mrr(knn_mat, test_positives, K, scaling):
-    # return vector/dict of mean reciprocal rank for every model
+    # return vector/dict of mean reciprocal rank given kNN list
     n = test_positives.shape[0]
     mrr = 0
     for i in range(n):
@@ -182,6 +183,8 @@ def mrr(knn_mat, test_positives, K, scaling):
 
 # PRESENT RESULTS
 def compute_results_table(knn_dict, test_positives):
+
+    print(test_positives)
     
     k_levels = [10, 100, 500]
     results = {}
@@ -320,12 +323,26 @@ if __name__ == "__main__":
     pos = dataset.load_positives("./dataset_micro/positives.json")
     knn_dict = get_knn_dict(MODELS, g, track_ids, pos, pos, None)
 
-    results = compute_results_table(knn_dict, positives)
+    results = compute_results_table(knn_dict, pos)
     print("\n", results)
 
-    examine_knn_weights(knn_dict)
-    examine_emb(["PinSage", "PinSageHN"], track_ids)
-    crawl_embedding(knn_dict, track_ids, dataset, None)
+    tr_info = dataset.tracks
+    _, pr_knn = knn_dict["PageRank"]
+    for i in range(40, 60):
+        q_id = track_ids[pos[i, 0]]
+        pos_id = track_ids[pos[i, 1]]
+        print(tr_info[q_id]["name"])
+        print(tr_info[pos_id]["name"])
+        print("-----------")
+        for j in range(0, 5):
+            i_id = track_ids[pr_knn[pos[i, 0], j]]
+            print(tr_info[i_id]["name"])
+        print()
+
+
+    #examine_knn_weights(knn_dict)
+    #examine_emb(["PinSage", "PinSageHN"], track_ids)
+    #crawl_embedding(knn_dict, track_ids, dataset, None)
 
 
     

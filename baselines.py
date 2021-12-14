@@ -10,10 +10,13 @@ import scipy as sp
 import dgl
 import torch
 import torch.nn as nn
+import networkx as nx
 
 from snore import SNoRe
+from node2vec import Node2Vec as N2V
 from torch.nn.modules.distance import CosineSimilarity
-import generate_node_features as cb
+
+from spotify_graph import SpotifyGraph
 
 
 
@@ -32,6 +35,7 @@ class PredictionModel(ABC):
         pass
 
 class EmbeddingModel(PredictionModel):
+    
     @abstractmethod
     def embed(self, nodeset):
         pass
@@ -146,20 +150,63 @@ class PersPageRank(PredictionModel):
         visit_prob = self.visit_prob(self.g, nodeset, self.n_hops, self.alpha)
         return visit_prob.topk(k, 1)
 
+class SimpleSimilarity(PredictionModel):
+
+    def __init__(self):
+        self.func = None #a networkx similarity function
+
+    def train(self, g, ids, train_set, test_set, features):
+        #g_hom = dgl.to_homogeneous(g)
+        #self.g = dgl.to_networkx(g_hom).to_undirected()
+        # bodge
+        print(g.number_of_nodes())
+        adj = g.adj(scipy_fmt="csr")
+        self.g = nx.from_scipy_sparse_matrix(adj)
+        print(len(self.g))
+        self.n = len(ids)
+
+    def knn(self, nodeset, k):
+        knn_list = []
+        for q in nodeset:
+            pairs = [(q.item(), n2) for n2 in range(0, self.n)]
+            print(pairs[0:10])
+            scores = self.func(self.g, pairs)
+            knn_to_q = torch.tensor( [sc[2] for sc in scores] )
+            knn_list.append(knn_to_q)
+        return torch.stack(knn_list, dim=0)
+
+class JaccardIndex(SimpleSimilarity):
+    def __init__(self):
+        self.func = nx.preferential_attachment
+
+class AdamicAdar(SimpleSimilarity):
+    def __init__(self):
+        self.func = nx.adamic_adar_index
+
+class Preferential(SimpleSimilarity):
+    def __init__(self):
+        self.func = nx.preferential_attachment
+
 
 class Node2Vec(EmbeddingModel):
 
     def __init__(self):
-        pass
+        self.model = None
+        self.embedding = None
+        self.sim_func = nn.CosineSimilarity(dim=1)
 
     def train(self, g, ids, train_set, test_set, features):
-        pass
+        self.g = dgl.to_networkx(g)
+        self.model = N2V(self.g, dimensions=32, walk_length=5, num_walks=10, workers=1)
+        self.wv = self.model.fit(window=10, min_count=1, batch_words=4).wv
+        self.embedding = torch.stack( [vec for vec in self.wv], dim=0)
+        print(self.embedding)
 
     def embed(self, nodeset):
-        pass
+        return self.embedding[nodeset, :]
 
     def knn(self, nodeset, k):
-        pass
+        return knn_from_emb(self.embedding, nodeset, k, self.sim_func)
 
 class Snore(EmbeddingModel):
 
@@ -221,10 +268,20 @@ if __name__ == "__main__":
     ], dtype=torch.float64)
 
     q = torch.tensor([0,1])
-    
     knn = knn_from_emb(emb, q, 3, torch.nn.CosineSimilarity(dim=1))
-    print(knn[0])
-    print(knn[1])
 
-    #mem = n_list.element_size() * n_list.nelement()
-    #print(f"{mem} bytes")
+    dataset = SpotifyGraph("dataset_micro", "dataset_micro/features_openl3")
+    g, track_ids, col_ids, features = dataset.to_dgl_graph()
+    print(type(g))
+    pos = dataset.load_positives("dataset_micro/positives.json")
+
+    sample = torch.randperm(len(track_ids))[0:10]
+
+    # n2v = Node2Vec()
+    # n2v.train(g, track_ids, pos, pos, features)
+
+    aa = AdamicAdar()
+    aa.train(g, track_ids, pos, pos, features)
+
+    emb = aa.knn(sample, 5)
+    print(emb)

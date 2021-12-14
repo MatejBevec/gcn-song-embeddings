@@ -7,3 +7,4 @@ __pycache__
 /baselines/emb/*
 dataset_*/features_*
 !/runs/*/state.pt
+/env

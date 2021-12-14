@@ -19,6 +19,9 @@ import pinsage_model as psm
 BASE_RUN_DIR = "./runs"
 PRECOMP_NAME = "neighborhoods_micro.pt"
 
+TEST_TRACK_INFO = None
+TEST_IDS = None
+
 def max_margin_loss(h_q, h_pos, h_neg, margin):
     batch_size = h_q.shape[0]
     d = h_q.shape[1]
@@ -73,14 +76,15 @@ def sample_hard_negatives(all_ids, pos_batch, nbhds, min_rank, max_rank):
 def sample_batch(all_ids, positives, batch_size, nbhds):
     # sample batch with repetition and with random negative per positive pair
     pos_batch = sample_positives_with_rep(positives, batch_size)
-    #batch, nodeset = sample_easy_negatives(all_ids, pos_batch)
-    batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, 10, 100)
+    batch, nodeset = sample_easy_negatives(all_ids, pos_batch)
+    #batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, 10, 100)
     return batch, nodeset
 
-def batch_entropy(batch):
+def batch_variance(h):
     # to monitor potential convergence to a constant
-    all_vec = batch.view(())
-
+    mean = torch.mean(h, dim=0)
+    var = torch.sum( torch.pow(h-mean, 2) ) / (h.shape[0]-1)
+    return torch.prod(var)
 
 # TRAINING
 
@@ -90,7 +94,7 @@ class PinSage():
 
         #todo: somehow wrap the parameters in a dict
 
-        self.run_name = "micro3"
+        self.run_name = "micro_test"
         self.precomp_path = PRECOMP_NAME
 
         self.g = g
@@ -99,12 +103,12 @@ class PinSage():
         self.features = features
         self.positives = positives
         
-        self.n_layers = 3
+        self.n_layers = 2
         self.in_dim = features.shape[1]
-        self.dimensions = (self.in_dim, 512, 256) # (in/features, hidden, out/embedding)
+        self.dimensions = (self.in_dim, 128, 128) # (in/features, hidden, out/embedding)
         self.n_hops = 500
         self.alpha = 0.85
-        self.T = 3
+        self.T = 5
 
         self.nbhds = psm.precompute_neighborhoods_topt(self.g, self.n,
                                     self.n_hops, self.alpha, psm.DEF_T_PRECOMP, self.precomp_path)
@@ -112,13 +116,13 @@ class PinSage():
         self.model = psm.PinSageModel(self.g, self.n, self.n_layers, self.dimensions,
                                     self.n_hops, self.alpha, self.T, self.nbhds)
         
-        self.lr = 1e-4
+        self.lr = 1e-5
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.2)
         self.margin = 1e-5 # no clue what this should be
-        self.epochs = 3
+        self.epochs = 5
         self.batch_size = 128
-        self.b_per_e = 20 # batches per epoch - for now with sampling w repetition
+        self.b_per_e = 50 # batches per epoch - for now with sampling w repetition
 
         # BUG: loss becomes NaN after 1st batch if i change T or n_layers
 
@@ -146,10 +150,21 @@ class PinSage():
         h_neg = self.model(self.features, batch[:,2])
         # -> check if node order is preserved when getting back the embedding
 
+        # print(batch[:,0])
+        # print(batch[:,1])
+        # print(batch[:,2])
+
+        # print(h_q[1,0:4])
+        # print(h_pos[1,0:4])
+        # print(h_neg[1,0:4])
+
         loss = max_margin_loss(h_q, h_pos, h_neg, self.margin)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        variance = batch_variance(h_q)
+        print(f"Batch variance = {variance}")
 
         return loss
 
@@ -205,10 +220,10 @@ class PinSage():
         torch.save(prog, os.path.join(BASE_RUN_DIR, self.run_name, "state.pt"))
 
 
-# todo: identical interface to baseline methods
+# TODO: identical interface to baseline methods
 def save_embeddings(trainer, dataset):
     tracks = dataset.tracks
-    emb = trainer.embeddings if trainer.embeddings else trainer.embed()
+    emb = trainer.embeddings if trainer.embeddings != None else trainer.embed()
     emb_dir = os.path.join(BASE_RUN_DIR, trainer.run_name, "emb")
     if not os.path.isdir(emb_dir):
         os.mkdir(emb_dir)
@@ -279,26 +294,42 @@ def knn_example(emb, n_examples, k, dataset, track_ids):
 
 if __name__ == "__main__":
 
-    dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_mfcc")
+    dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
     positives = dataset.load_positives("./dataset_micro/positives.json")
 
     trainer = PinSage(g, len(track_ids), features, positives)
 
     #torch.autograd.set_detect_anomaly(True)
-    # trainer.train()
-    # save_embeddings(trainer, dataset)
-    # emb = load_embeddings(trainer, dataset)
-    # #embeddings_to_board(emb, trainer, dataset)
-    # knn_example(emb, 3, 5, dataset, track_ids)
+    # print(features[10:20, :8])
+    # pre_emb = trainer.embed()
+    # print(pre_emb[10:20,:8])
+    trainer.train()
+    save_embeddings(trainer, dataset)
+    emb = load_embeddings(trainer, dataset)
+    sample = torch.randperm(emb.shape[0])[:10]
+    print(emb[sample,:8])
+    # # #embeddings_to_board(emb, trainer, dataset)
+    knn_example(emb, 3, 5, dataset, track_ids)
 
 
+    # TEST_TRACK_INFO = dataset.tracks
+    # TEST_IDS = track_ids
+
+    # nbhds = trainer.nbhds
     # pos = sample_positives_with_rep(positives, 8)
-    # print(pos)
-    # batch, nodeset = sample_hard_negatives(track_ids, pos, trainer.nbhds, 10, 50)
+    # all_nodes = torch.arange(0, len(track_ids)).long()
+    # #batch, nodeset = sample_hard_negatives(all_nodes, pos, nbhds, 10, 100)
+    # batch, nodeset = sample_easy_negatives(all_nodes, pos)
     # print(batch)
+    # for i in range(batch.shape[0]):
+    #     id1 = TEST_IDS[batch[i,0]]
+    #     id2 = TEST_IDS[batch[i,1]]
+    #     id3 = TEST_IDS[batch[i,2]]
+    #     print(TEST_TRACK_INFO[id1]["name"])
+    #     print(TEST_TRACK_INFO[id2]["name"])
+    #     print(TEST_TRACK_INFO[id3]["name"])
+    #     print()
 
-    # h_q = trainer.model(features, batch[:,0])
 
-    # print(features[batch[:,0], :])
-    # print(h_q)
+    # trainer.train_batch(batch)

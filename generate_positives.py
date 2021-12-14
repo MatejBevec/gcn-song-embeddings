@@ -3,7 +3,6 @@ import numpy as np
 import dgl
 import torch
 import json
-from pinsage_code.pinsage_training import PRECOMP_NAME
 
 from spotify_graph import SpotifyGraph
 import pinsage_model as psm
