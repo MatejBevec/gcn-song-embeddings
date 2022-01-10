@@ -4,7 +4,7 @@ Model je Graph Neural Network, specifično Pinsage:
 
 <https://arxiv.org/pdf/1806.01973.pdf>
 
-![1641838776410](C:\Users\thema\AppData\Roaming\Typora\typora-user-images\1641838776410.png)
+![1641838776410](figures/conv.png)
 
 Vsakemu vozlišču v grafu pripišemo značilke. Algoritem izvede konvolucijo nad vsakim vozliščem i.e. agregira značilke sosedov in danega vozlišča v končni embeding. Sosedi niso direktni sosedi iz grafa ampak pridobljeni z Personalized PageRank. Pinsage specifično je induktiven in ne deluje na celotni matriki grafa ampak dinamično generira batche kot je prikazano.
 
@@ -23,7 +23,7 @@ Učni podatki (ground truth) so trojice oblike *<query, positive, negative>* kje
 
 Izgubna funkcija (max-margin loss) kaznuje preslikavo, kjer sta *query* in *negative* bolj podobna kot *query* in *positive*.
 
-![1641840471629](C:\Users\thema\AppData\Roaming\Typora\typora-user-images\1641840471629.png)
+![1641840471629](figures/data.png)
 
 
 
@@ -41,7 +41,7 @@ Učenje se zdi zelo nestabilno.
 
 Z pravilno izbiro parametrov mi sicer uspe priti do lepe izgubne krivulje in nekega minimuma. 
 
-![2022-01-10 19_54_18](C:\Users\thema\Desktop\Snap\2022-01-10 19_54_18.png)
+![1641840471629](figures/loss.png)
 
 Vendar pa na končnih evalvacijskih metodah (hit-rate, mean reciprocal rank), dobljeni embedingi še vedno dajejo slabši rezultat kot izključno audio embeddingi i.e. značilke vozlišč, kljub temu, da
 
