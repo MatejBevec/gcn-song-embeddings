@@ -20,7 +20,7 @@ import pinsage_model as psm
 import pinsage_training as pst
 
 from baselines import PredictionModel, EmbeddingModel, \
-    Snore, PersPageRank, EmbLoader
+    Snore, PersPageRank, EmbLoader, Random
 
 PRECOMP_K = 1000
 KNN_DIR = "./baselines/knn"
@@ -30,9 +30,14 @@ MODELS = {
     "Snore": Snore(),
     "node2vec": Node2Vec(),
     "PageRank": PersPageRank(),
-    "PinSageHN": EmbLoader("runs/micro3/emb"),
+    "PinSageLatest": EmbLoader("runs/high_lr_standardized3/emb"),
+    "PinSageLatest2": EmbLoader("runs/high_lr_standardized7/emb"),
+    "PinSageStdHn": EmbLoader("runs/high_lr_standardized_hn/emb"),
+    "PinSageStdHn2": EmbLoader("runs/high_lr_standardized_hn3/emb"),
+    "PinSageStdHn3": EmbLoader("runs/high_lr_standardized_hn4/emb"),
     "PinSageL3": EmbLoader("runs/micro_openl3/emb"),
-    "OpenL3": EmbLoader("dataset_micro/features_openl3")
+    "OpenL3": EmbLoader("dataset_micro/features_openl3"),
+    "Random": Random()
 }
 
 # GOTTA TRAIN FIRST!
@@ -229,7 +234,7 @@ def print_knn(g, ids, dataset, knn_w, knn_n):
     for i in range(0, knn_n.shape[0]):
         track = dataset.tracks[ids[knn_n[i]]]
         deg = g.in_degrees(knn_n[i]) + g.out_degrees(knn_n[i])
-        print(f"{i}. [{knn_w[i]:.2f}] {track['name']} - {track['artist']} ({deg.item()})")
+        print(f"{i}. [{knn_w[i]:.3f}] {track['name']} - {track['artist']} ({deg.item()})")
     print("\033[0m")
     pass
 
@@ -242,7 +247,7 @@ def crawl_embedding(knn_dict, ids, dataset, model_names):
     # interactively crawl embedding by selecting nearest neighbors
 
     model_names = knn_dict.keys() if not model_names else model_names
-    K = 5
+    K = 20
 
     q = torch.randint(0, len(ids), (1,))
     while(True):
@@ -326,23 +331,23 @@ if __name__ == "__main__":
     results = compute_results_table(knn_dict, pos)
     print("\n", results)
 
-    tr_info = dataset.tracks
-    _, pr_knn = knn_dict["PageRank"]
-    for i in range(40, 60):
-        q_id = track_ids[pos[i, 0]]
-        pos_id = track_ids[pos[i, 1]]
-        print(tr_info[q_id]["name"])
-        print(tr_info[pos_id]["name"])
-        print("-----------")
-        for j in range(0, 5):
-            i_id = track_ids[pr_knn[pos[i, 0], j]]
-            print(tr_info[i_id]["name"])
-        print()
+    # tr_info = dataset.tracks
+    # _, pr_knn = knn_dict["PageRank"]
+    # for i in range(40, 60):
+    #     q_id = track_ids[pos[i, 0]]
+    #     pos_id = track_ids[pos[i, 1]]
+    #     print(tr_info[q_id]["name"])
+    #     print(tr_info[pos_id]["name"])
+    #     print("-----------")
+    #     for j in range(0, 5):
+    #         i_id = track_ids[pr_knn[pos[i, 0], j]]
+    #         print(tr_info[i_id]["name"])
+    #     print()
 
 
     #examine_knn_weights(knn_dict)
     #examine_emb(["PinSage", "PinSageHN"], track_ids)
-    #crawl_embedding(knn_dict, track_ids, dataset, None)
+    crawl_embedding(knn_dict, track_ids, dataset, ["PageRank", "PinSageLatest", "PinSageStdHn3"])
 
 
     

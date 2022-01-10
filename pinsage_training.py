@@ -6,6 +6,7 @@ import numpy as np
 import dgl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.modules.activation import Tanh
 import time
 from torch.utils.tensorboard import SummaryWriter
@@ -76,8 +77,8 @@ def sample_hard_negatives(all_ids, pos_batch, nbhds, min_rank, max_rank):
 def sample_batch(all_ids, positives, batch_size, nbhds):
     # sample batch with repetition and with random negative per positive pair
     pos_batch = sample_positives_with_rep(positives, batch_size)
-    batch, nodeset = sample_easy_negatives(all_ids, pos_batch)
-    #batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, 10, 100)
+    #batch, nodeset = sample_easy_negatives(all_ids, pos_batch)
+    batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, 10, 100)
     return batch, nodeset
 
 def batch_variance(h):
@@ -94,7 +95,7 @@ class PinSage():
 
         #todo: somehow wrap the parameters in a dict
 
-        self.run_name = "micro_test"
+        self.run_name = "high_lr_standardized_hn4"
         self.precomp_path = PRECOMP_NAME
 
         self.g = g
@@ -105,10 +106,10 @@ class PinSage():
         
         self.n_layers = 2
         self.in_dim = features.shape[1]
-        self.dimensions = (self.in_dim, 128, 128) # (in/features, hidden, out/embedding)
+        self.dimensions = (self.in_dim, 512, 128) # (in/features, hidden, out/embedding)
         self.n_hops = 500
         self.alpha = 0.85
-        self.T = 5
+        self.T = 3
 
         self.nbhds = psm.precompute_neighborhoods_topt(self.g, self.n,
                                     self.n_hops, self.alpha, psm.DEF_T_PRECOMP, self.precomp_path)
@@ -116,11 +117,11 @@ class PinSage():
         self.model = psm.PinSageModel(self.g, self.n, self.n_layers, self.dimensions,
                                     self.n_hops, self.alpha, self.T, self.nbhds)
         
-        self.lr = 1e-5
+        self.lr = 1e-3
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.2)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.90)
         self.margin = 1e-5 # no clue what this should be
-        self.epochs = 5
+        self.epochs = 10
         self.batch_size = 128
         self.b_per_e = 50 # batches per epoch - for now with sampling w repetition
 
@@ -196,6 +197,7 @@ class PinSage():
 
     def embed(self):
 
+        self.model.eval()
         self.embeddings = self.model(self.features, self.all_ids)
         return self.embeddings
 
@@ -268,6 +270,80 @@ def embeddings_to_board(emb, trainer, dataset):
         label_img=torch.stack(images, dim=0), tag=f"pinsage:{trainer.run_name}")
 
 
+# BASELINE: small FC NN, trained with the same positives and with node feature (content embedding) input
+class FineTunedNNModel(nn.Module):
+    def __init__(self, in_dim):
+        super(FineTunedNNModel, self).__init__()
+
+        self.in_dim = in_dim
+        self.hid_dim = 512
+        self.out_dim = 128
+
+        self.FC1 = nn.Linear(self.in_dim, self.hid_dim)
+        self.FC2 = nn.Linear(self.hid_dim, self.out_dim)
+
+    def forward(self, x):
+        x = F.relu(self.FC1(x))
+        y = self.FC2(x)
+        return y
+
+class FineTunedNN():
+    def __init__(self):
+        self.model = None
+        pass
+
+    def train_batch(self, batch):
+        # batch are triples of form (query, positive, negative) -> ids
+        #print(batch)
+        h_q = self.model(self.features[batch[:,0],:])
+        h_pos = self.model(self.features[batch[:,1],:])
+        h_neg = self.model(self.features[batch[:,2],:])
+
+       
+
+        loss = max_margin_loss(h_q, h_pos, h_neg, self.margin)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        
+        return loss
+    
+    def train(self, ids, positives, features, nbhds):
+        self.features = features
+        self.n = self.features.shape[0]
+        self.ids = ids
+        self.model = FineTunedNNModel(features.shape[1])
+        self.lr = 1e-4
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.90)
+        self.margin = 1e-5
+        self.nbhds = nbhds
+
+        epochs = 100
+        batch_size = 128
+        b_per_e = 100
+        
+        for e in range(epochs):
+            print(f"Epoch {e}:")
+            #for i in range(0, self.n, batch_size):
+                #end = min(i+batch_size, self.n)
+            for i in range(0, b_per_e):
+                batch = sample_batch(ids, positives, batch_size, self.nbhds)
+                
+                loss = self.train_batch(batch[0])
+
+                if i%20 == 0:
+                    print(f"{i}/{b_per_e} batches done. Loss = {loss}")
+            self.scheduler.step()
+
+
+    def embed(self, nodeset):
+        pass
+    
+    def knn(self, nodeset, k):
+        pass
+
+
 
 def song_titles(indices, dataset, ids):
     # get song title, artist from node index
@@ -300,22 +376,24 @@ if __name__ == "__main__":
 
     trainer = PinSage(g, len(track_ids), features, positives)
 
+    print(features.shape)
+    print(features[0])
+
     #torch.autograd.set_detect_anomaly(True)
-    # print(features[10:20, :8])
-    # pre_emb = trainer.embed()
-    # print(pre_emb[10:20,:8])
-    trainer.train()
-    save_embeddings(trainer, dataset)
-    emb = load_embeddings(trainer, dataset)
-    sample = torch.randperm(emb.shape[0])[:10]
-    print(emb[sample,:8])
-    # # #embeddings_to_board(emb, trainer, dataset)
-    knn_example(emb, 3, 5, dataset, track_ids)
+    # trainer.train()
+    # save_embeddings(trainer, dataset)
+    # emb = load_embeddings(trainer, dataset)
+    # sample = torch.randperm(emb.shape[0])[:10]
+    # print(emb[sample,:8])
+    # #embeddings_to_board(emb, trainer, dataset)
+    # knn_example(emb, 3, 5, dataset, track_ids)
+
+    fcn = FineTunedNN()
+    fcn.train(track_ids, positives, features, trainer.nbhds)
 
 
     # TEST_TRACK_INFO = dataset.tracks
     # TEST_IDS = track_ids
-
     # nbhds = trainer.nbhds
     # pos = sample_positives_with_rep(positives, 8)
     # all_nodes = torch.arange(0, len(track_ids)).long()

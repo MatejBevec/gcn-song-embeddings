@@ -60,6 +60,10 @@ class SpotifyGraph():
                 node_id = fn.rsplit('.')[0]
                 self.features_dict[node_id] = torch.load(os.path.join(self.ft_dir, fn))
             features = torch.stack(list(self.features_dict.values()), dim=0)
+            mean = features.mean(dim=0)
+            std = features.std(dim=0, unbiased=True)
+            features = (features - mean) / std
+
         else:
             features = None
 

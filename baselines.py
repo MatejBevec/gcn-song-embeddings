@@ -159,21 +159,18 @@ class SimpleSimilarity(PredictionModel):
         #g_hom = dgl.to_homogeneous(g)
         #self.g = dgl.to_networkx(g_hom).to_undirected()
         # bodge
-        print(g.number_of_nodes())
         adj = g.adj(scipy_fmt="csr")
         self.g = nx.from_scipy_sparse_matrix(adj)
-        print(len(self.g))
         self.n = len(ids)
 
     def knn(self, nodeset, k):
         knn_list = []
         for q in nodeset:
             pairs = [(q.item(), n2) for n2 in range(0, self.n)]
-            print(pairs[0:10])
             scores = self.func(self.g, pairs)
             knn_to_q = torch.tensor( [sc[2] for sc in scores] )
             knn_list.append(knn_to_q)
-        return torch.stack(knn_list, dim=0)
+        return torch.stack(knn_list, dim=0).topk(k, dim=1)
 
 class JaccardIndex(SimpleSimilarity):
     def __init__(self):
@@ -197,9 +194,12 @@ class Node2Vec(EmbeddingModel):
 
     def train(self, g, ids, train_set, test_set, features):
         self.g = dgl.to_networkx(g)
-        self.model = N2V(self.g, dimensions=32, walk_length=5, num_walks=10, workers=1)
+        self.model = N2V(self.g, dimensions=64, walk_length=20, num_walks=200, workers=1)
         self.wv = self.model.fit(window=10, min_count=1, batch_words=4).wv
-        self.embedding = torch.stack( [vec for vec in self.wv], dim=0)
+        vec_list = []
+        for i in range(0, len(ids)):
+            vec_list.append(torch.tensor(self.wv.get_vector(i)))
+        self.embedding = torch.stack(vec_list, dim=0)
         print(self.embedding)
 
     def embed(self, nodeset):
@@ -254,7 +254,23 @@ class EmbLoader(EmbeddingModel):
     def knn(self, nodeset, k):
         return knn_from_emb(self.embedding, nodeset, k, self.sim_func)
 
+class Random(PredictionModel):
 
+    def __init__(self):
+        pass
+
+    def train(self, g, ids, train_set, test_set, features):
+        self.ids = ids
+        self.n = len(ids)
+
+    def knn(self, nodeset, k):
+        #nodes_list = torch.randint(0, self.n-1, size=(nodeset.shape[0], k))
+        nodes_list = [torch.randperm(self.n)[0:k] for i in range(0, nodeset.shape[0])]
+        nodes = torch.stack(nodes_list, dim=0)
+        print(nodes)
+        weights = torch.ones_like(nodes)
+        print(weights)
+        return weights, nodes
 
 if __name__ == "__main__":
 
@@ -280,7 +296,7 @@ if __name__ == "__main__":
     # n2v = Node2Vec()
     # n2v.train(g, track_ids, pos, pos, features)
 
-    aa = AdamicAdar()
+    aa = Preferential()
     aa.train(g, track_ids, pos, pos, features)
 
     emb = aa.knn(sample, 5)

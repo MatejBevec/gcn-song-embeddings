@@ -194,6 +194,7 @@ class ConvLayer(nn.Module):
         nodeset_h = get_embeddings(h, nodeset, self.in_dim)
         neighbor_h = get_embeddings(h, nb_nodes.flatten(), self.in_dim)
         neighbor_h = neighbor_h.view(n_nodes, T, self.in_dim) # back to T neighbors per node
+        # (n_nodes, T, n_features)
 
         # transform neighbor features through NN and aggregate
         neighbor_h = nn.functional.relu( self.Q(neighbor_h) )
