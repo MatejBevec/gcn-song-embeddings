@@ -19,4 +19,5 @@ tensorboard==2.7
 h5py==2.10
 vggish-keras==0.0.18
 openl3==0.4
+musicnn==0.1.0
 snore-embedding==0.3.3
