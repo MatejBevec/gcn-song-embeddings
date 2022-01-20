@@ -16,6 +16,8 @@ import librosa
 import openl3
 import vggish_keras as vgk
 import urllib
+import musicnn
+import musicnn.extractor
 
 OVERRIDE = False
 CLIPS_SUBDIR = "clips"
@@ -161,9 +163,11 @@ def generate_features(dataset_dir, models, online=False):
                 print(f"{len(batch_ids)}/{BATCH_SIZE} ids are new.")
                 if len(batch_ids) == 0:
                     continue
-
+            
+            paths = [os.path.join(clips_dir, cid + CLIP_SUFFIX) for cid in batch_ids] # BODGE FOR MUSICNN
             clips = load_batch_clips(batch_ids, clips_dir) # better if it could be outside for loop 
-            embeddings = models[m_name].embed(clips)
+
+            embeddings = models[m_name].embed(clips, paths)
 
             save_batch_emb(batch_ids, emb_dir, embeddings)
 
@@ -181,7 +185,7 @@ class OpenL3():
             embedding_size=512
         )
 
-    def embed(self, clips):
+    def embed(self, clips, paths):
         emb_list = []
         for clip, sr in clips:
             clip = clip.transpose(1,0).numpy()
@@ -197,7 +201,7 @@ class Vggish():
     def __init__(self):
         self.model = vgk.get_embedding_function(hop_duration=0.25)
 
-    def embed(self, clips):
+    def embed(self, clips, paths):
         emb_list = []
         for clip, sr in clips:
             Z, ts = self.model(clip, sr)
@@ -205,6 +209,27 @@ class Vggish():
     
         return torch.stack(emb_list, dim=0)
 
+class MusicNN():
+
+    def __init__(self):
+        pass
+
+    def embed(self, clips, paths):
+        emb_list = []
+        for clip_path in paths:
+            t = time.time()
+            taggram, tags, features = musicnn.extractor.extractor(clip_path,
+                                                    model='MTT_musicnn',
+                                                    input_length=3,
+                                                    input_overlap=None,
+                                                    extract_features=True)
+            emb = features["max_pool"]
+            # "penultimate"
+            emb = torch.from_numpy(emb).mean(dim=0)
+            emb_list.append(emb)
+            print(f"\n {time.time() - t} \n")
+            print(emb)
+        return torch.stack(emb_list, dim=0)
 
 def generate_features_mfcc(dataset_dir):
     print("Generating MFCC embeddings...")
@@ -259,7 +284,23 @@ if __name__ == "__main__":
     ])
 
     models = {
-        "openl3test": OpenL3()
+        #"openl3test": OpenL3(),
+        "musicnn": MusicNN()
     }
 
-    generate_features("dataset_micro", models)
+    # generate_features("dataset_micro", models)
+
+    clip_path = "dataset_micro/clips/0dIoGTQXDh1wVnhIiSyYEa.mp3"
+    clip, sr = get_clip(clip_path, SAMPLE_RATE, N_SAMPLES)
+    spec = to_spectrogram(clip)
+    print(spec)
+
+    batch, all_spec = musicnn.extractor.batch_data(clip_path, 128, 32)
+    print(all_spec)
+
+
+    #maybe take last layer -> get 10 vectors -> average neighboring 2 to get 5 -> concat into 1000 dim vector
+    #and compare against taking max_pool (753) and just averaging for all 10 sections -> you basically just capture harmonies
+    #but hopefully well
+
+    #USE VIRTENV FOR ALL DEPENDENCIES

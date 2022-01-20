@@ -1,3 +1,4 @@
+import json
 import os
 from os import path
 
@@ -13,6 +14,8 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision
 from torchvision.io.image import ImageReadMode
 
+import wandb
+
 
 from spotify_graph import SpotifyGraph
 import pinsage_model as psm
@@ -24,6 +27,8 @@ TEST_TRACK_INFO = None
 TEST_IDS = None
 
 def max_margin_loss(h_q, h_pos, h_neg, margin):
+    norm = torch.nn.functional.normalize
+    h_q, h_pos, h_neg = norm(h_q, dim=1), norm(h_pos, dim=1), norm(h_neg, dim=1)
     batch_size = h_q.shape[0]
     d = h_q.shape[1]
     q_dot_pos = torch.bmm(h_q.view(batch_size, 1, d), h_pos.view(batch_size, d, 1)).squeeze()
@@ -32,7 +37,6 @@ def max_margin_loss(h_q, h_pos, h_neg, margin):
     dot_sum_zeros = torch.stack([dot_sum, torch.zeros_like(dot_sum)], 1)
     loss_vector = torch.max(dot_sum_zeros, 1, keepdim=True).values.squeeze()
     return loss_vector.mean()
-
 
 # BATCH CONSTRUCTION
 
@@ -95,7 +99,7 @@ class PinSage():
 
         #todo: somehow wrap the parameters in a dict
 
-        self.run_name = "high_lr_standardized_hn4"
+        self.run_name = "control_long_low_lr"
         self.precomp_path = PRECOMP_NAME
 
         self.g = g
@@ -117,11 +121,11 @@ class PinSage():
         self.model = psm.PinSageModel(self.g, self.n, self.n_layers, self.dimensions,
                                     self.n_hops, self.alpha, self.T, self.nbhds)
         
-        self.lr = 1e-3
+        self.lr = 1e-4
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.90)
         self.margin = 1e-5 # no clue what this should be
-        self.epochs = 10
+        self.epochs = 20
         self.batch_size = 128
         self.b_per_e = 50 # batches per epoch - for now with sampling w repetition
 
@@ -139,6 +143,10 @@ class PinSage():
         self.writer = SummaryWriter(board_dir)
         self.e = 0
         self.b = 0
+
+        wandb.config = {"learning_rate": self.lr, "epochs": self.epochs, "batch_size": self.batch_size}
+        wandb.init(project='gcn-song-embeddings', name=self.run_name)
+        wandb.watch(self.model, log="all", log_freq=10, log_graph=True)
         
         self.load_model()
 
@@ -149,25 +157,22 @@ class PinSage():
         h_q = self.model(self.features, batch[:,0])
         h_pos = self.model(self.features, batch[:,1])
         h_neg = self.model(self.features, batch[:,2])
-        # -> check if node order is preserved when getting back the embedding
-
-        # print(batch[:,0])
-        # print(batch[:,1])
-        # print(batch[:,2])
-
-        # print(h_q[1,0:4])
-        # print(h_pos[1,0:4])
-        # print(h_neg[1,0:4])
 
         loss = max_margin_loss(h_q, h_pos, h_neg, self.margin)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        variance = batch_variance(h_q)
-        print(f"Batch variance = {variance}")
+        node_feat_loss = max_margin_loss(
+            self.features[batch[:,0], :],
+            self.features[batch[:,1], :],
+            self.features[batch[:,2], :],
+            self.margin
+        )
 
-        return loss
+        variance = batch_variance(h_q)
+
+        return loss, node_feat_loss, variance
 
     def train(self):
         # another option: data gets passed here not at init
@@ -182,10 +187,15 @@ class PinSage():
             while self.b < self.b_per_e:
 
                 batch, nodeset = sample_batch(self.all_ids, self.positives, self.batch_size, self.nbhds)
-                loss = self.train_batch(batch)
+                loss, node_feat_loss, variance = self.train_batch(batch)
 
                 print(f"Batch {self.b+1}/{self.b_per_e} done. Loss = {loss}")
                 self.writer.add_scalar("loss/train", loss, self.e*self.b_per_e + self.b + 1)
+                wandb.log({'Train Loss': loss,
+                        'Node Features Loss': node_feat_loss,
+                        'Batch Variance': variance,
+                        'Learning Rate': cur_lr
+                        })
                 
                 self.save_model()
                 self.b += 1
@@ -276,8 +286,8 @@ class FineTunedNNModel(nn.Module):
         super(FineTunedNNModel, self).__init__()
 
         self.in_dim = in_dim
-        self.hid_dim = 512
-        self.out_dim = 128
+        self.hid_dim = 1024
+        self.out_dim = 256
 
         self.FC1 = nn.Linear(self.in_dim, self.hid_dim)
         self.FC2 = nn.Linear(self.hid_dim, self.out_dim)
@@ -288,8 +298,9 @@ class FineTunedNNModel(nn.Module):
         return y
 
 class FineTunedNN():
-    def __init__(self):
-        self.model = None
+    def __init__(self, n_cls):
+        self.writer = SummaryWriter("runs/fcnn2/board")
+        self.model = FineTunedNNModel(n_cls)
         pass
 
     def train_batch(self, batch):
@@ -299,7 +310,7 @@ class FineTunedNN():
         h_pos = self.model(self.features[batch[:,1],:])
         h_neg = self.model(self.features[batch[:,2],:])
 
-       
+
 
         loss = max_margin_loss(h_q, h_pos, h_neg, self.margin)
         self.optimizer.zero_grad()
@@ -312,8 +323,7 @@ class FineTunedNN():
         self.features = features
         self.n = self.features.shape[0]
         self.ids = ids
-        self.model = FineTunedNNModel(features.shape[1])
-        self.lr = 1e-4
+        self.lr = 5e-5
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.90)
         self.margin = 1e-5
@@ -327,14 +337,18 @@ class FineTunedNN():
             print(f"Epoch {e}:")
             #for i in range(0, self.n, batch_size):
                 #end = min(i+batch_size, self.n)
+            batch_loss = 0
             for i in range(0, b_per_e):
                 batch = sample_batch(ids, positives, batch_size, self.nbhds)
                 
                 loss = self.train_batch(batch[0])
+                batch_loss += loss
 
                 if i%20 == 0:
                     print(f"{i}/{b_per_e} batches done. Loss = {loss}")
             self.scheduler.step()
+            self.writer.add_scalar("loss", batch_loss/b_per_e, e*b_per_e)
+            wandb.log({'Train Loss': batch_loss/b_per_e})
 
 
     def embed(self, nodeset):
@@ -366,6 +380,55 @@ def knn_example(emb, n_examples, k, dataset, track_ids):
         print( song_titles(knn[1], dataset, track_ids) )
         print()
 
+
+def inspect_dataset(data_dir = "./dataset_micro", f_dir="features_openl3", pos_dir="positives.json"):
+    # TODO: check that index ids align with spotify ids everywhere
+    # TODO: check that training triples are correct
+
+    dataset = SpotifyGraph(data_dir, os.path.join(data_dir, f_dir))
+    g, track_ids, col_ids, features = dataset.to_dgl_graph()
+    positives = dataset.load_positives(os.path.join(data_dir, pos_dir))
+
+    dataset2 = SpotifyGraph(data_dir, os.path.join(data_dir, f_dir))
+    g2, track_ids2, col_ids2, features2 = dataset2.to_dgl_graph()
+    positives2 = dataset2.load_positives(os.path.join(data_dir, pos_dir))
+
+    e_from, e_to = g.edges()
+    e_from2, e_to2 = g2.edges()
+    print("\nInstanciating 2 datasets:")
+    print("Graphs equal:")
+    print(torch.all(e_from == e_from2))
+    print(torch.all(e_to == e_to2))
+    print("Tracks IDs equal: ", track_ids == track_ids2)
+    print("Collection IDs equal: ", col_ids == col_ids2)
+    print("Features equal:", torch.all(features == features2))
+
+    print("\nIndex and string ID consistency:")
+
+    #sample = torch.randperm(len(track_ids))[0:10]
+    sample = 69
+    ind_nbh = g.successors(sample)
+    str_nbh_from_ind = np.concatenate((track_ids,col_ids))[ind_nbh]
+    # beware of this track/collection split
+    str_sample = track_ids[sample]
+    str_nbh = [edge["to"] for edge in dataset.graph["edges"] if edge["from"] == str_sample]
+    print("IDs consistent in graph: ", str_nbh == list(str_nbh_from_ind))
+
+    with open(os.path.join(data_dir, pos_dir), "r", encoding="utf-8") as f:
+            pos_json = json.load(f)
+    ind_pos = positives[sample, :]
+    str_pos = [pos_json[sample]["a"], pos_json[sample]["b"]]
+    str_pos_from_ind = np.concatenate((track_ids,col_ids))[ind_pos]
+    print("IDs consistent in positive pairs: ", str_pos == list(str_pos_from_ind))
+
+    print("\nSome examples:\n")
+    sample = torch.randperm(len(track_ids))[0:5]
+    for ind in sample:
+        pos = positives[ind, :]
+        print(dataset.song_info(pos[0]))
+        print(dataset.song_info(pos[1]))
+        print()
+
     
 
 if __name__ == "__main__":
@@ -376,38 +439,18 @@ if __name__ == "__main__":
 
     trainer = PinSage(g, len(track_ids), features, positives)
 
-    print(features.shape)
-    print(features[0])
+    #inspect_dataset()
 
-    #torch.autograd.set_detect_anomaly(True)
-    # trainer.train()
-    # save_embeddings(trainer, dataset)
-    # emb = load_embeddings(trainer, dataset)
-    # sample = torch.randperm(emb.shape[0])[:10]
-    # print(emb[sample,:8])
-    # #embeddings_to_board(emb, trainer, dataset)
-    # knn_example(emb, 3, 5, dataset, track_ids)
-
-    fcn = FineTunedNN()
-    fcn.train(track_ids, positives, features, trainer.nbhds)
+    trainer.train()
+    save_embeddings(trainer, dataset)
+    emb = load_embeddings(trainer, dataset)
+    sample = torch.randperm(emb.shape[0])[:10]
+    print(emb[sample,:8])
+    #embeddings_to_board(emb, trainer, dataset)
+    knn_example(emb, 3, 5, dataset, track_ids)
 
 
-    # TEST_TRACK_INFO = dataset.tracks
-    # TEST_IDS = track_ids
-    # nbhds = trainer.nbhds
-    # pos = sample_positives_with_rep(positives, 8)
-    # all_nodes = torch.arange(0, len(track_ids)).long()
-    # #batch, nodeset = sample_hard_negatives(all_nodes, pos, nbhds, 10, 100)
-    # batch, nodeset = sample_easy_negatives(all_nodes, pos)
-    # print(batch)
-    # for i in range(batch.shape[0]):
-    #     id1 = TEST_IDS[batch[i,0]]
-    #     id2 = TEST_IDS[batch[i,1]]
-    #     id3 = TEST_IDS[batch[i,2]]
-    #     print(TEST_TRACK_INFO[id1]["name"])
-    #     print(TEST_TRACK_INFO[id2]["name"])
-    #     print(TEST_TRACK_INFO[id3]["name"])
-    #     print()
-
-
-    # trainer.train_batch(batch)
+    # fcn = FineTunedNN(features.shape[1])
+    # wandb.init(project='gcn-song-embeddings')
+    # wandb.watch(fcn.model, log='all')
+    # fcn.train(track_ids, positives, features, trainer.nbhds)

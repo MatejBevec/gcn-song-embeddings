@@ -16,8 +16,8 @@ from baselines import EmbLoader, Node2Vec
 
 
 from spotify_graph import SpotifyGraph
-import pinsage_model as psm
-import pinsage_training as pst
+#import pinsage_model as psm
+#import pinsage_training as pst
 
 from baselines import PredictionModel, EmbeddingModel, \
     Snore, PersPageRank, EmbLoader, Random
@@ -30,12 +30,11 @@ MODELS = {
     "Snore": Snore(),
     "node2vec": Node2Vec(),
     "PageRank": PersPageRank(),
-    "PinSageLatest": EmbLoader("runs/high_lr_standardized3/emb"),
-    "PinSageLatest2": EmbLoader("runs/high_lr_standardized7/emb"),
-    "PinSageStdHn": EmbLoader("runs/high_lr_standardized_hn/emb"),
-    "PinSageStdHn2": EmbLoader("runs/high_lr_standardized_hn3/emb"),
-    "PinSageStdHn3": EmbLoader("runs/high_lr_standardized_hn4/emb"),
     "PinSageL3": EmbLoader("runs/micro_openl3/emb"),
+    "PinSageLatest": EmbLoader("runs/high_lr_standardized3/emb"),
+    "PinSageStdHn3": EmbLoader("runs/high_lr_standardized_hn4/emb"),
+    "PinSageBias": EmbLoader("runs/test2_wandb_bias_large/emb"),
+    "PinSageBiasLong": EmbLoader("runs/control_long/emb"),
     "OpenL3": EmbLoader("dataset_micro/features_openl3"),
     "Random": Random()
 }
@@ -247,7 +246,7 @@ def crawl_embedding(knn_dict, ids, dataset, model_names):
     # interactively crawl embedding by selecting nearest neighbors
 
     model_names = knn_dict.keys() if not model_names else model_names
-    K = 20
+    K = 10
 
     q = torch.randint(0, len(ids), (1,))
     while(True):
@@ -330,6 +329,7 @@ if __name__ == "__main__":
 
     results = compute_results_table(knn_dict, pos)
     print("\n", results)
+    results.to_csv("results.csv")
 
     # tr_info = dataset.tracks
     # _, pr_knn = knn_dict["PageRank"]
@@ -347,7 +347,7 @@ if __name__ == "__main__":
 
     #examine_knn_weights(knn_dict)
     #examine_emb(["PinSage", "PinSageHN"], track_ids)
-    crawl_embedding(knn_dict, track_ids, dataset, ["PageRank", "PinSageLatest", "PinSageStdHn3"])
+    crawl_embedding(knn_dict, track_ids, dataset, ["PageRank", "PinSageBias", "OpenL3"])
 
 
     

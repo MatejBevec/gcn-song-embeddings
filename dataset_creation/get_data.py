@@ -434,7 +434,7 @@ if __name__ == "__main__":
         exit()
     mode = sys.argv[1]
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-    dc = DatasetCollector("../pinsage_code/dataset_mini", n)
+    dc = DatasetCollector("dataset", n)
 
     #dc.add_track_genre() --> # "genres" not available with this version of API?
 

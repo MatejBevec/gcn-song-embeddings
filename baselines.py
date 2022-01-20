@@ -272,6 +272,7 @@ class Random(PredictionModel):
         print(weights)
         return weights, nodes
 
+
 if __name__ == "__main__":
 
     emb = torch.tensor([

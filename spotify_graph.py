@@ -79,7 +79,8 @@ class SpotifyGraph():
 
         a = torch.tensor([ index_map[pair["a"]] for pair in positives ], dtype=torch.int64)
         b = torch.tensor([ index_map[pair["b"]] for pair in positives ], dtype=torch.int64)
-        return torch.stack((a,b), dim=1)
+        perm = torch.randperm(a.shape[0])
+        return torch.stack((a,b), dim=1)#[perm, :]
 
     def load_batch_features(self, ids):
         
@@ -90,6 +91,12 @@ class SpotifyGraph():
 
         return batch_features
 
+    def song_info(self, index_id):
+        track_ids = list(self.tracks)
+        name = self.tracks[track_ids[index_id]]["name"]
+        artist = self.tracks[track_ids[index_id]]["artist"]
+        return f"{name} - {artist}"
+
 
 if __name__ == "__main__":
 
@@ -97,15 +104,3 @@ if __name__ == "__main__":
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
     positives = dataset.load_positives("./dataset_micro/positives.json")
 
-    dataset2 = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
-    g2, track_ids2, col_ids2, features2 = dataset.to_dgl_graph()
-    positives2 = dataset2.load_positives("./dataset_micro/positives.json")
-
-    print(track_ids[0:10])
-    print(track_ids2[0:10])
-
-    print(features[0:10, :5])
-    print(features2[0:10, :5])
-
-    print(positives[0:10, :])
-    print(positives2[0:10, :])

@@ -179,11 +179,11 @@ class ConvLayer(nn.Module):
 
         self.Q = nn.Linear(in_dim, hidden_dim) # NN layer for every neighbor pre-aggregation (m)
         torch.nn.init.xavier_uniform_(self.Q.weight)
-        self.Q.bias.data.fill_(0.01)
+        self.Q.bias.data.fill_(0.3)
 
         self.W = nn.Linear(in_dim + hidden_dim, out_dim) # NN layer post-aggregation (d)
         torch.nn.init.xavier_uniform_(self.W.weight)
-        self.W.bias.data.fill_(0.01)
+        self.W.bias.data.fill_(0.3)
 
     def forward(self, h, nodeset, nb_nodes, nb_weights):
         
@@ -197,7 +197,7 @@ class ConvLayer(nn.Module):
         # (n_nodes, T, n_features)
 
         # transform neighbor features through NN and aggregate
-        neighbor_h = nn.functional.relu( self.Q(neighbor_h) )
+        neighbor_h = nn.functional.leaky_relu( self.Q(neighbor_h) )
         agg = (nb_weights[:, :, None] * neighbor_h) .sum(1) / nb_weights.sum(1, keepdim=True)
         # (maybe put this division by weight sum in sample_neighborhood_topt?)
 
@@ -205,7 +205,7 @@ class ConvLayer(nn.Module):
 
         # concatenate node features with aggreagate, run through 2nd NN, normalize output vector
         concat = torch.cat([nodeset_h, agg], 1).float()
-        new_h = nn.functional.relu( self.W(concat) )
+        new_h = nn.functional.leaky_relu( self.W(concat) )
         new_h_norm = new_h / new_h.norm(dim=1, keepdim=True)
 
         return new_h_norm
@@ -236,7 +236,7 @@ class PinSageModel(nn.Module):
 
         self.G1 = nn.Linear(self.out_dim, self.out_dim)
         torch.nn.init.xavier_uniform_(self.G1.weight)
-        self.G1.bias.data.fill_(0.01)
+        self.G1.bias.data.fill_(0.3)
 
         self.G2 = nn.Linear(self.out_dim, self.out_dim, bias=False)
         torch.nn.init.xavier_uniform_(self.G2.weight)
@@ -257,7 +257,7 @@ class PinSageModel(nn.Module):
             nodeset_new_h = self.conv_layers[i](h, nodeset, nb_nodes, nb_weights)
             h = put_embeddings(h, nodeset, nodeset_new_h)
 
-        nodeset_new_h = self.G2( nn.functional.relu( self.G1(nodeset_new_h) ) )
+        nodeset_new_h = self.G2( nn.functional.leaky_relu( self.G1(nodeset_new_h) ) )
         h = put_embeddings(h, nodeset, nodeset_new_h)
 
         t3 = time.time()
