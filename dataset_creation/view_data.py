@@ -1,19 +1,23 @@
+from curses.ascii import DC3
+import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from sklearn import neighbors
 import torch
 
 import os, sys
 from os import path
 import random
 import math
+import numpy as np
 
 import networkx as nx
 from networkx.algorithms import bipartite
 
 from get_data import DatasetCollector
 
-LEAF_RATIO = 0.9 # remove LEAF_RATIO of allr degree 1 nodes to prune the graph
+LEAF_RATIO = 1 # remove LEAF_RATIO of all degree 1 nodes to prune the graph
 NORMALIZE_DEGREE = True # normalize visit counts with respect to degree (nerf popular nodes)
 K = 3 # show K nearest neighbours when crawling graph
 RANDOM_SEED = 420
@@ -146,7 +150,7 @@ def print_nn(dc, g, nn, k):
         print(f"{i}. [{nn[nn_ids[i]]:.2f}] {short_str(track['name'], 30)} - {track['artist']} ({g.degree[nn_ids[i]]})")
     print("\033[0m")
 
-def show_info(dc, g):
+def show_info(dc, g, show_samples=True):
 
     #collections = {n for n, d in g.nodes(data=True) if d["bipartite"] == 0}
     #tracks = set(g) - collections
@@ -158,16 +162,44 @@ def show_info(dc, g):
     print("# tracks in tracks.json: ", len(dc.tracks))
     print("# tracks in graph.json: ", len(dc.graph["tracks"]))
     print("# cols in collections.json: ", len(dc.collections))
+    num_pl = len([c for c in dc.collections.values() if c["type"] == "playlist"])
+    num_alb = len([c for c in dc.collections.values() if c["type"] == "album"])
+    print(f"-> {num_pl} playlists and {num_alb} albums")
     print("# cols in graph.json: ", len(dc.graph["collections"]))
 
     num_components = nx.number_connected_components(g)
     component_sizes = [len(c) for c in sorted(nx.connected_components(g), key=len, reverse=True)]
     print("# components: ",  num_components)
-    print("Component sizes: ", component_sizes)
+    print("Component sizes: ", component_sizes[0:10])
 
     g_degrees = sorted([d for n, d in g.degree()], reverse=True)
+    g_nodes = sorted([ (el[0], el[1]) for el in g.degree()], reverse=True, key=lambda el: el[1])
+    
+    print("Highest degree nodes:")
+    print(g_degrees[0:10])
+    for i in range(10):
+        title = dc.tracks[g_nodes[i][0]]['name']
+        artist = dc.tracks[g_nodes[i][0]]['artist']
+        print(f"{i}. ({g_degrees[i]}) {title} - {artist}")
+    print()
+
+    if show_samples:
+        print("Sample:")
+        size = 30
+        str_ids = list(dc.tracks.keys())
+        sample = list(np.random.randint(0, len(str_ids), size))
+        for i in sample:
+            title = dc.tracks[str_ids[i]]['name']
+            artist = dc.tracks[str_ids[i]]['artist']
+            print(f"{title} - {artist}")
+        print()       
+
     print("Mean degree: ", np.mean(g_degrees))
     print("Median degree: ", np.median(g_degrees))
+    print("Degree histogram: ")
+    hist = np.histogram(g_degrees, bins=10)
+    print(list(hist[0]))
+    print(list(hist[1]))
     
     fig = plt.figure(figsize=(16,8))
     ax1 = fig.add_subplot(1,2,1)
@@ -262,22 +294,75 @@ def filter_dataset_with_graph(dc, g):
 
 def make_mini_dataset(dc, g, save_dir):
     # sample a small subset of the graph and save to save_dir
-    min_deg = 4 #8 # remove nodes with smaller degree
-    max_deg = 120 #80 # remove tracks with larger degree
+    min_deg = 10 #8 # remove nodes with smaller degree
+    min_prob = 1 # remove nodes with smaller degree with min_prob probability
+    max_deg = 15000 #80 # remove tracks with larger degree
+
+    sample_random = False
+    sample_ratio = 0.23
 
     print(f"{len(g)} nodes, cutting min, max degree...")
+    max_rem, min_rem = 0, 0
     for node in list(g.nodes):
         if node in dc.tracks and g.degree[node] > max_deg:
+            max_rem += 1
             g.remove_node(node)
     for node in list(g.nodes):
-        if g.degree[node] < min_deg:
-            g.remove_node(node)
+        if True and g.degree[node] < min_deg:
+            if random.random() < min_prob:
+                min_rem += 1
+                g.remove_node(node)
+
+    if sample_random:
+        for node in list(g.nodes):
+            if random.random() > sample_ratio:
+                g.remove_node(node)
+    
+            
+    print(f"{len(g)} nodes left.")
+    print(f"{max_rem} max removed, {min_rem} min removed.")
+
+    giant = g.subgraph(sorted(nx.connected_components(g), key=len, reverse=True)[0])
+    g = nx.Graph(giant)
     print(f"{len(g)} nodes left.")
 
     filter_dataset_with_graph(dc, g)
     dc.save_dataset_as(save_dir)
 
-def to_nx_graph(dc, remove_leafs=True, giant_only=True):
+def tracks_to_csv(dc, columns=["valence"]):
+    columns1 = ["name", "artist_id", "artist", "album_id", "album", "genres", "release_date",
+                    "popularity", "danceability", "energy", "key", "loudness", "mode",
+                    "acousticness", "instrumentalness", "liveness", "valence", "tempo"]
+    df = pd.DataFrame.from_dict(dc.tracks, orient="index", columns=columns1)
+    df = df.sort_index().sample(frac=1, random_state=42)
+    df.to_csv(os.path.join(dc.dir, "metadata.tsv"), sep="\t")
+
+    columns2 = columns
+    df = pd.DataFrame.from_dict(dc.tracks, orient="index", columns=columns2)
+    df = df.sort_index().sample(frac=1, random_state=42)
+    df.to_csv(os.path.join(dc.dir, "target.tsv"), sep="\t")
+
+def save_text_data(dc, g):
+    #save title + album + artist + titles of 5 playlists the track appears in
+    texts_dir = os.path.join(dc.dir, "texts")
+    if not os.path.isdir(texts_dir):
+        os.mkdir(texts_dir)
+    tracks = list(dc.tracks)
+    for tid in tracks:
+        tr_info = dc.tracks[tid]
+        text = f"{tr_info['name']}\n{tr_info['artist']}\n{tr_info['album']}\n"
+        nbh = list(g.neighbors(tid))
+        for cid in nbh[:8]:
+            text += f"{dc.collections[cid]['name']}\n"
+
+        pth = os.path.join(texts_dir, tid + ".txt")
+        print(pth)
+        with open(pth, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    
+
+def to_nx_graph(dc, remove_leafs=False, giant_only=True):
     g = nx.Graph()
     g.add_nodes_from(dc.graph["collections"], bipartite=0)
     g.add_nodes_from(dc.graph["tracks"], bipartite=1) 
@@ -301,14 +386,13 @@ def to_nx_graph(dc, remove_leafs=True, giant_only=True):
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 2 or (sys.argv[1] not in ["info", "crawl", "sample", "mini", "positives"]):
+    if len(sys.argv) < 2 or (sys.argv[1] not in ["info", "crawl", "sample", "mini", "metadata"]):
         print("Unrecognized command.")
         exit()
     mode = sys.argv[1]
-    top_comp = int(sys.argv[2]) if len(sys.argv) > 2 else None #use only largest top_comp components  
 
-    dc = DatasetCollector("../pinsage_code/dataset_mini", 10) 
-    g = to_nx_graph(dc, remove_leafs=True, giant_only=True)
+    dc = DatasetCollector(sys.argv[2], 10) 
+    g = to_nx_graph(dc, remove_leafs=False, giant_only=True)
 
     try:
         if mode == "info":
@@ -318,9 +402,14 @@ if __name__ == "__main__":
         if mode == "sample":
             show_sample(dc, g)
         if mode == "mini":
-            make_mini_dataset(dc, g, sys.argv[2])
+            make_mini_dataset(dc, g, sys.argv[3])
+        if mode == "metadata":
+            tracks_to_csv(dc)
+            save_text_data(dc, g)
     except KeyboardInterrupt:
         print("Exiting...")
 
-    #dc.save_dataset()
+    
+
+    #Example: python view_data.py info ../dataset_small
 

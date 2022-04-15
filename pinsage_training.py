@@ -1,6 +1,7 @@
 import json
 import os
 from os import path
+from re import I
 
 import pandas as pd
 import numpy as np
@@ -13,15 +14,16 @@ import time
 from torch.utils.tensorboard import SummaryWriter
 import torchvision
 from torchvision.io.image import ImageReadMode
+from torch.optim.lr_scheduler import _LRScheduler
 
 import wandb
+from tqdm import tqdm
 
 
 from spotify_graph import SpotifyGraph
 import pinsage_model as psm
 
 BASE_RUN_DIR = "./runs"
-PRECOMP_NAME = "neighborhoods_micro.pt"
 
 TEST_TRACK_INFO = None
 TEST_IDS = None
@@ -37,6 +39,14 @@ def max_margin_loss(h_q, h_pos, h_neg, margin):
     dot_sum_zeros = torch.stack([dot_sum, torch.zeros_like(dot_sum)], 1)
     loss_vector = torch.max(dot_sum_zeros, 1, keepdim=True).values.squeeze()
     return loss_vector.mean()
+
+def cosine_dissimilarity(a, b):
+    return 1 - F.cosine_similarity(a, b)
+
+TRIPLET_LOSS = torch.nn.TripletMarginLoss(0.0001, reduction="mean")
+COSINE_TRIPLET_LOSS = torch.nn.TripletMarginWithDistanceLoss(distance_function=cosine_dissimilarity, 
+                                                            margin=0.0001,
+                                                            reduction="mean")
 
 # BATCH CONSTRUCTION
 
@@ -78,11 +88,13 @@ def sample_hard_negatives(all_ids, pos_batch, nbhds, min_rank, max_rank):
     nodeset = batch.flatten().unique().to(torch.int64)
     return batch, nodeset
 
-def sample_batch(all_ids, positives, batch_size, nbhds):
+def sample_batch(all_ids, positives, batch_size, nbhds, hard_negatives=True):
     # sample batch with repetition and with random negative per positive pair
     pos_batch = sample_positives_with_rep(positives, batch_size)
-    #batch, nodeset = sample_easy_negatives(all_ids, pos_batch)
-    batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, 10, 100)
+    if hard_negatives:
+        batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, 10, 100)
+    else:
+        batch, nodeset = sample_easy_negatives(all_ids, pos_batch)
     return batch, nodeset
 
 def batch_variance(h):
@@ -93,14 +105,36 @@ def batch_variance(h):
 
 # TRAINING
 
+class PinSageScheduler(_LRScheduler):
+
+    def __init__(self, optimizer, batches_per_epoch, warmup_epochs=1, decay_per_epoch=0.8):
+        self.optimizer = optimizer
+        self.exp_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.85)
+        self.bpe = batches_per_epoch
+        self.warmup = warmup_epochs
+        self.decay = decay_per_epoch
+        self.base_lr = self.optimizer.param_groups[0]["lr"]
+        self._step = 0
+        self._epoch = 0
+        self._rate = 0
+
+    def step(self):
+        self._epoc
+        self._step += 1 
+        epoch = self._step % self.bpe
+        pass
+
+    def rate(self, step):
+        pass
+
 class PinSage():
 
-    def __init__(self, g, n_items, features, positives):
-
-        #todo: somehow wrap the parameters in a dict
-
-        self.run_name = "control_long_low_lr"
-        self.precomp_path = PRECOMP_NAME
+    def __init__(self, g, n_items, features, positives, log=True, load_save=True):
+        
+        # "dataset_features_params"
+        self.run_name = "gs_test"
+        # BODGE BODGE BODGE
+        self.precomp_path = g.nbhds_path
 
         self.g = g
         self.n = n_items
@@ -114,6 +148,7 @@ class PinSage():
         self.n_hops = 500
         self.alpha = 0.85
         self.T = 3
+        self.hard_negatives = True
 
         self.nbhds = psm.precompute_neighborhoods_topt(self.g, self.n,
                                     self.n_hops, self.alpha, psm.DEF_T_PRECOMP, self.precomp_path)
@@ -121,13 +156,13 @@ class PinSage():
         self.model = psm.PinSageModel(self.g, self.n, self.n_layers, self.dimensions,
                                     self.n_hops, self.alpha, self.T, self.nbhds)
         
-        self.lr = 1e-4
+        self.lr = 1e-3
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.90)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.8)
         self.margin = 1e-5 # no clue what this should be
-        self.epochs = 20
+        self.epochs = 3
         self.batch_size = 128
-        self.b_per_e = 50 # batches per epoch - for now with sampling w repetition
+        self.b_per_e = 500 # batches per epoch - for now with sampling w repetition
 
         # BUG: loss becomes NaN after 1st batch if i change T or n_layers
 
@@ -144,11 +179,15 @@ class PinSage():
         self.e = 0
         self.b = 0
 
-        wandb.config = {"learning_rate": self.lr, "epochs": self.epochs, "batch_size": self.batch_size}
-        wandb.init(project='gcn-song-embeddings', name=self.run_name)
-        wandb.watch(self.model, log="all", log_freq=10, log_graph=True)
+        self.log = log
+        if self.log:
+            wandb.config = {"learning_rate": self.lr, "epochs": self.epochs, "batch_size": self.batch_size}
+            wandb.init(project='gcn-song-embeddings', name=self.run_name)
+            wandb.watch(self.model, log="all", log_freq=10, log_graph=True)
         
-        self.load_model()
+        self.load_save = load_save
+        if self.load_save:
+            self.load_model()
 
     
     def train_batch(self, batch):
@@ -163,20 +202,33 @@ class PinSage():
         loss.backward()
         self.optimizer.step()
 
-        node_feat_loss = max_margin_loss(
-            self.features[batch[:,0], :],
-            self.features[batch[:,1], :],
-            self.features[batch[:,2], :],
-            self.margin
+        # node_feat_loss = max_margin_loss(
+        #     self.features[batch[:,0], :],
+        #     self.features[batch[:,1], :],
+        #     self.features[batch[:,2], :],
+        #     self.margin
+        # )
+
+        norm = torch.nn.functional.normalize
+        node_feat_loss = COSINE_TRIPLET_LOSS(
+            norm(self.features[batch[:,0], :], dim=1),
+            norm(self.features[batch[:,1], :], dim=1),
+            norm(self.features[batch[:,2], :], dim=1),
         )
+        # node_feat_loss = COSINE_TRIPLET_LOSS(
+        #     self.features[batch[:,1], :],
+        #     self.features[batch[:,0], :],
+        #     self.features[batch[:,2], :],
+        # )        
 
         variance = batch_variance(h_q)
 
         return loss, node_feat_loss, variance
 
     def train(self):
-        # another option: data gets passed here not at init
-        # todo: train test split
+        # TODO: train test split
+
+        print(f"\033[0;33mTraining PinSage...\033[0m")
 
         while self.e < self.epochs:
             print(f"Training epoch {self.e+1}/{self.epochs}...")
@@ -184,31 +236,41 @@ class PinSage():
             self.writer.add_scalar("lr", cur_lr, self.e*self.b_per_e)
             t1 = time.time()
 
+            pbar = tqdm(total=self.b_per_e)
+            pbar.update(1)
+
             while self.b < self.b_per_e:
 
-                batch, nodeset = sample_batch(self.all_ids, self.positives, self.batch_size, self.nbhds)
+                batch, nodeset = sample_batch(self.all_ids, self.positives, 
+                                    self.batch_size, self.nbhds, hard_negatives=self.hard_negatives)
                 loss, node_feat_loss, variance = self.train_batch(batch)
 
-                print(f"Batch {self.b+1}/{self.b_per_e} done. Loss = {loss}")
+                #print(f"Batch {self.b+1}/{self.b_per_e} done. Loss = {loss}")
+                pbar.update(1)
+                pbar.set_description(f"Loss = {loss}, bathes done")
                 self.writer.add_scalar("loss/train", loss, self.e*self.b_per_e + self.b + 1)
-                wandb.log({'Train Loss': loss,
-                        'Node Features Loss': node_feat_loss,
-                        'Batch Variance': variance,
-                        'Learning Rate': cur_lr
-                        })
+                if self.log:
+                    wandb.log({'Train Loss': loss,
+                            'Node Features Loss': node_feat_loss,
+                            'Batch Variance': variance,
+                            'Learning Rate': cur_lr
+                            })
                 
-                self.save_model()
+                if self.load_save:
+                    self.save_model()
                 self.b += 1
             
             print(f"{time.time() - t1}s elapsed.")
+            pbar.close()
             self.b = 0
             self.e += 1
             self.scheduler.step()
 
-    def embed(self):
-
+    def embed(self, ids=None):
+        if ids is None:
+            ids = self.all_ids
         self.model.eval()
-        self.embeddings = self.model(self.features, self.all_ids)
+        self.embeddings = self.model(self.features, ids)
         return self.embeddings
 
     def load_model(self):
@@ -231,14 +293,69 @@ class PinSage():
         }
         torch.save(prog, os.path.join(BASE_RUN_DIR, self.run_name, "state.pt"))
 
+def save_embeddings(trainer, dataset, base_run_dir=BASE_RUN_DIR, override_run_name=None):
+    track_ids = list(dataset.tracks)
+    n = len(track_ids)
+    bsize = 256
+    run_name = override_run_name if override_run_name else trainer.run_name
+    emb_dir = os.path.join(base_run_dir, run_name, "emb")
+    if not os.path.isdir(emb_dir):
+        os.makedirs(emb_dir)
 
-# TODO: identical interface to baseline methods
-def save_embeddings(trainer, dataset):
+    pbar = tqdm(total=n, desc="Saving embeddings")
+    for i in range(0, n, bsize):
+        #print(i, i+bsize)
+        ids = torch.arange(i, min(i+bsize, n))
+        #print(ids)
+        #emb = trainer.embed(ids) if trainer.embeddings is None else trainer.embeddings[ids, :]
+        emb = trainer.embed(ids)
+        #print(emb.shape)
+        for id in ids:
+            str_id = track_ids[id]
+            save_path = os.path.join(emb_dir, str_id + ".pt")
+            if os.path.isfile(save_path):
+                continue
+            #print(id-i)
+            torch.save(emb[id-i, :].clone().detach(), save_path)
+        #print("")
+
+        #print(f"{ids[-1]}/{n} done")
+        pbar.update(bsize)
+    pbar.close()
+
+def gridsearch_recovery(dataset):
+    # im fucking Sherlock
+
+    run_dir = "runs_gs"
+    new_run_dir = "runs_gs_fixed"
+    track_ids = list(dataset.tracks)
+    n = len(track_ids)
+    bsize = 256
+
+    for d in os.listdir(run_dir):
+        emb_dir = os.path.join(run_dir, d, "emb")
+        new_emb_dir = os.path.join(new_run_dir, d, "emb")
+        if not os.path.isdir(new_emb_dir):
+            os.makedirs(new_emb_dir)
+        #print(emb_dir)
+
+        for i in range(0, n, bsize):
+            ids = torch.arange(i, min(i+bsize, n))
+            for id in ids:
+                wrong_str_id = track_ids[2*i - id]
+                wrong_save_path = os.path.join(emb_dir, wrong_str_id + ".pt")
+                emb = torch.load(wrong_save_path) #vector number #id
+                correct_str_id = track_ids[id]
+                correct_save_path = os.path.join(new_emb_dir, correct_str_id + ".pt")
+                torch.save(emb, correct_save_path)
+
+def save_embeddings_old(trainer, dataset, override_run_name=None):
     tracks = dataset.tracks
     emb = trainer.embeddings if trainer.embeddings != None else trainer.embed()
-    emb_dir = os.path.join(BASE_RUN_DIR, trainer.run_name, "emb")
+    run_name = override_run_name if override_run_name else trainer.run_name
+    emb_dir = os.path.join(BASE_RUN_DIR, run_name, "emb")
     if not os.path.isdir(emb_dir):
-        os.mkdir(emb_dir)
+        os.makedirs(emb_dir)
     for i in range(emb.shape[0]):
         track_id = list(tracks)[i]
         save_path = os.path.join(emb_dir, track_id + ".pt")
@@ -246,9 +363,9 @@ def save_embeddings(trainer, dataset):
             continue
         torch.save(emb[i, :].clone().detach(), save_path)
 
-def load_embeddings(trainer, dataset):
+def load_embeddings(trainer, dataset, base_run_dir=BASE_RUN_DIR):
     tracks = dataset.tracks
-    emb_dir = os.path.join(BASE_RUN_DIR, trainer.run_name, "emb")
+    emb_dir = os.path.join(base_run_dir, trainer.run_name, "emb")
     emb_list = []
     for track_id in tracks:
         load_path = os.path.join(emb_dir, track_id + ".pt")
@@ -348,7 +465,8 @@ class FineTunedNN():
                     print(f"{i}/{b_per_e} batches done. Loss = {loss}")
             self.scheduler.step()
             self.writer.add_scalar("loss", batch_loss/b_per_e, e*b_per_e)
-            wandb.log({'Train Loss': batch_loss/b_per_e})
+            if self.log:
+                wandb.log({'Train Loss': batch_loss/b_per_e})
 
 
     def embed(self, nodeset):
@@ -381,7 +499,7 @@ def knn_example(emb, n_examples, k, dataset, track_ids):
         print()
 
 
-def inspect_dataset(data_dir = "./dataset_micro", f_dir="features_openl3", pos_dir="positives.json"):
+def inspect_dataset(data_dir = "./dataset_small", f_dir="features_openl3", pos_dir="positives_lfm_large.json"):
     # TODO: check that index ids align with spotify ids everywhere
     # TODO: check that training triples are correct
 
@@ -401,6 +519,9 @@ def inspect_dataset(data_dir = "./dataset_micro", f_dir="features_openl3", pos_d
     print(torch.all(e_to == e_to2))
     print("Tracks IDs equal: ", track_ids == track_ids2)
     print("Collection IDs equal: ", col_ids == col_ids2)
+    print((features != features2).nonzero())
+    print(features[0, 0:20])
+    print(features2[0, 0:20])
     print("Features equal:", torch.all(features == features2))
 
     print("\nIndex and string ID consistency:")
@@ -422,25 +543,43 @@ def inspect_dataset(data_dir = "./dataset_micro", f_dir="features_openl3", pos_d
     print("IDs consistent in positive pairs: ", str_pos == list(str_pos_from_ind))
 
     print("\nSome examples:\n")
-    sample = torch.randperm(len(track_ids))[0:5]
+    sample = torch.randperm(positives.shape[0])[0:5]
     for ind in sample:
         pos = positives[ind, :]
         print(dataset.song_info(pos[0]))
         print(dataset.song_info(pos[1]))
         print()
 
+def loss_test(dataset_dir="./dataset_small",
+                positives_path="positives_random.json",
+                features_list=["features_random", "features_openl3", "features_musicnn", "features_vggish_msd"]):
+
+    results = {}
+
+    for ft in features_list:
+        dataset = SpotifyGraph(dataset_dir, os.path.join(dataset_dir, ft))
+        g, track_ids, col_ids, features = dataset.to_dgl_graph()
+        positives = dataset.load_positives(os.path.join(dataset_dir, positives_path))
+        all_ids = torch.arange(0, len(track_ids), 1, dtype=torch.int64)
+        trainer = PinSage(g, len(track_ids), features, positives, log=False, load_save=False)
+
+        batch, _ = sample_batch(trainer.all_ids, trainer.positives, 64, trainer.nbhds)
+        loss, nf_loss, variance = trainer.train_batch(batch)
+
+        results[ft] = {"NF loss": nf_loss.detach(),
+                    "Pinsage loss": loss.detach(),
+                    "FT size": features[0].shape,
+                    "FT variance": batch_variance(features[:64, :]),
+                    "FT range": torch.max(torch.quantile(features[:64, :], torch.tensor([0.75]), dim=1))}
+
+    for ft in results:
+        print(f"{ft}:")
+        print(results[ft])
+
+
     
 
-if __name__ == "__main__":
-
-    dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
-    g, track_ids, col_ids, features = dataset.to_dgl_graph()
-    positives = dataset.load_positives("./dataset_micro/positives.json")
-
-    trainer = PinSage(g, len(track_ids), features, positives)
-
-    #inspect_dataset()
-
+def train_and_save(dataset, track_ids, trainer):
     trainer.train()
     save_embeddings(trainer, dataset)
     emb = load_embeddings(trainer, dataset)
@@ -448,6 +587,23 @@ if __name__ == "__main__":
     print(emb[sample,:8])
     #embeddings_to_board(emb, trainer, dataset)
     knn_example(emb, 3, 5, dataset, track_ids)
+
+
+if __name__ == "__main__":
+
+    #inspect_dataset(data_dir="./dataset_small", f_dir="features_openl3")
+
+    dataset = SpotifyGraph("./dataset_small", "./dataset_small/features_openl3")
+    g, track_ids, col_ids, features = dataset.to_dgl_graph()
+    # gridsearch_recovery(dataset)
+    positives = dataset.load_positives("./dataset_small/positives_lfm.json")
+
+    trainer = PinSage(g, len(track_ids), features, positives, log=False, load_save=True)
+
+    train_and_save(dataset, track_ids, trainer)
+    #save_embeddings(trainer, dataset, override_run_name="small_openl3_lfm_copy5")
+
+    # loss_test()
 
 
     # fcn = FineTunedNN(features.shape[1])

@@ -2,7 +2,7 @@ import os
 from os import path
 import json
 import time
-#os.add_dll_directory("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.0/bin")
+import shutil
 
 import pandas as pd
 import numpy as np
@@ -14,16 +14,17 @@ import torchaudio
 import torchaudio.transforms as T
 import librosa
 import openl3
-import vggish_keras as vgk
+#import vggish_keras as vgk
 import urllib
 import musicnn
 import musicnn.extractor
 
 OVERRIDE = False
 CLIPS_SUBDIR = "clips"
+TEMP_CLIPS_SUBDIR = "temp_clips"
 CLIP_SUFFIX = ".mp3"
 EMB_PREFIX = "features_"
-BATCH_SIZE = 16
+BATCH_SIZE = 128
 SAMPLE_RATE = 16000
 N_SAMPLES = 480000
 DB_SCALE = True
@@ -86,21 +87,28 @@ def to_spectrogram(clip):
         spec /= torch.max(spec)
     return spec
 
-def download_batch_from_api(batch_ids, tracks_dict):
+def download_batch_from_api(batch_ids, tracks_dict, temp_dir):
 
-    temp_dir = "./temp_clips"
+    if os.path.isdir(temp_dir):
+        shutil.rmtree(temp_dir)
+    os.mkdir(temp_dir)
 
     for id in batch_ids:
         url = tracks_dict[id]["preview_url"]
         for i in range(0, 3):
             try:
                 urllib.request.urlretrieve(url, os.path.join(temp_dir, id + CLIP_SUFFIX))
-                return True
             except Exception as e:
                 print(e)
-                print(f"An error occured, trying {id} again.")
+                print(f"An error occured at id {id}. Trying once more...")
+                try:
+                    urllib.request.urlretrieve(url, os.path.join(temp_dir, id + CLIP_SUFFIX))
+                except Exception as e:
+                    print(e)
     
+    print("Downloaded batch of clips.")
 
+                
 
 def load_batch_clips(batch_ids, clips_dir):
     
@@ -129,48 +137,72 @@ def keep_new_ids(batch_ids, emb_dir):
     new_ids = list( set(batch_ids) - set(existing_ids) )
     return new_ids
 
-def generate_features(dataset_dir, models, online=False):
+def generate_features(dataset_dir, models, online=False, load_clips=True, selection=None):
     # load clips from the dataset/clips folder generate features and save
 
     clips_dir = os.path.join(dataset_dir, CLIPS_SUBDIR)
-    # if online:
-    #     with open(os.path.join(dataset_dir, "tracks.json"), "r", encoding="utf-8") as f:
-    #         track_dict = json.load(f)
-    #         all_ids = list(track_dict)
-    # else:
-    #     all_ids = [fn.rsplit('.')[0] for fn in sorted(os.listdir(clips_dir))]
-    # 
 
     with open(os.path.join(dataset_dir, "tracks.json"), "r", encoding="utf-8") as f:
         track_dict = json.load(f)
         all_ids = list(track_dict)
+    if selection is not None:
+        all_ids = list(np.array(list(track_dict))[selection])
     n = len(all_ids)
 
-    print(f"Generating features for {n} clips. Online = {online}.")
+    print(f"\n\033[0;33mGenerating features for {n} clips. Online = {online}.")
+    print(f"Dataset: {dataset_dir}")
+    print(f"Models: {list(models.keys())}\033[0m\n")
 
     for i in range(0, n, BATCH_SIZE):
         batch_ids = all_ids[i:min(n, i+BATCH_SIZE)]
         print(f"Batch {i}-{min(n, i+BATCH_SIZE)}")
 
-        if online:
-            download_batch_from_api(batch_ids, track_dict)      
+        t_0 = time.time()
 
+        # store yet-uncomputed ids for each model
+        new_ids = {}
+        for m_name in models:
+            emb_dir = os.path.join(dataset_dir, EMB_PREFIX + m_name)
+            new_ids[m_name] = keep_new_ids(batch_ids, emb_dir)
+        
+        # download needed clips into temp folder (if streamed)
+        if online:
+            clips_dir = os.path.join(dataset_dir, TEMP_CLIPS_SUBDIR)
+            if not OVERRIDE:
+                all_new_ids = set()
+                for nids in new_ids.values():
+                    all_new_ids = all_new_ids | set(nids)
+
+            download_batch_from_api(list(all_new_ids), track_dict, clips_dir)
+
+        t_dl = time.time()    
+
+        # compute embeddings in this batch with every given model
         for m_name in models:
             print(f"Using {m_name} model:")
             emb_dir = os.path.join(dataset_dir, EMB_PREFIX + m_name)
             if not OVERRIDE:
-                batch_ids = keep_new_ids(batch_ids, emb_dir)
+                batch_ids = new_ids[m_name]
                 print(f"{len(batch_ids)}/{BATCH_SIZE} ids are new.")
                 if len(batch_ids) == 0:
                     continue
             
-            paths = [os.path.join(clips_dir, cid + CLIP_SUFFIX) for cid in batch_ids] # BODGE FOR MUSICNN
-            clips = load_batch_clips(batch_ids, clips_dir) # better if it could be outside for loop 
+            paths = [os.path.join(clips_dir, cid + CLIP_SUFFIX) for cid in batch_ids]
+            print("Loading batch into memory...")
+            clips = load_batch_clips(batch_ids, clips_dir) if load_clips else None
+            t_mem = time.time()
 
             embeddings = models[m_name].embed(clips, paths)
+            t_emb = time.time()
 
             save_batch_emb(batch_ids, emb_dir, embeddings)
+            t_save = time.time()
 
+            print(f"Batch done.\nElapsed:")
+            print(f"downloading clips: {t_dl-t_0}")
+            print(f"loading into memory: {t_mem-t_dl}")
+            print(f"embedding: {t_emb-t_mem}")
+            print(f"saving embeddings: {t_save-t_emb}")
 
 
 
@@ -196,18 +228,39 @@ class OpenL3():
 
         return torch.stack(emb_list, dim=0)
 
-class Vggish():
+# class Vggish():
 
-    def __init__(self):
-        self.model = vgk.get_embedding_function(hop_duration=0.25)
+#     def __init__(self):
+#         self.model = vgk.get_embedding_function(hop_duration=0.25)
+
+#     def embed(self, clips, paths):
+#         emb_list = []
+#         for clip, sr in clips:
+#             Z, ts = self.model(clip, sr)
+#             emb_list.append(torch.tensor(Z))
+    
+#         return torch.stack(emb_list, dim=0)
+
+class Vggish2():
+
+    def __init__(self, model="MTT_vgg", layer="pool5"):
+        self.model = model
+        self.layer = layer
 
     def embed(self, clips, paths):
         emb_list = []
-        for clip, sr in clips:
-            Z, ts = self.model(clip, sr)
-            emb_list.append(torch.tensor(Z))
-    
+        for clip_path in paths:
+            t = time.time()
+            taggram, tags, features = musicnn.extractor.extractor(clip_path,
+                                                    model=self.model,
+                                                    input_length=3,
+                                                    input_overlap=None,
+                                                    extract_features=True)
+            emb = features[self.layer]
+            emb = torch.from_numpy(emb).mean(dim=0)
+            emb_list.append(emb)
         return torch.stack(emb_list, dim=0)
+
 
 class MusicNN():
 
@@ -227,9 +280,19 @@ class MusicNN():
             # "penultimate"
             emb = torch.from_numpy(emb).mean(dim=0)
             emb_list.append(emb)
-            print(f"\n {time.time() - t} \n")
-            print(emb)
         return torch.stack(emb_list, dim=0)
+
+
+
+class RandomFeatures():
+
+    def __init__(self, dim=512):
+        self.dim = dim
+
+    def embed(self, clips, paths):
+        n = len(paths)
+        return torch.rand((n, self.dim))
+
 
 def generate_features_mfcc(dataset_dir):
     print("Generating MFCC embeddings...")
@@ -265,10 +328,6 @@ def generate_features_mfcc(dataset_dir):
 
 if __name__ == "__main__":
 
-    #generate_features_openl3("dataset_micro")
-    #generate_features_mfcc("dataset_mini")
-    #generate_features_vggish("dataset_micro")
-
     batch_ids = [
         "0dIoGTQXDh1wVnhIiSyYEa",
         "0dRY4OrSY53yUjVgfgne1W",
@@ -284,23 +343,21 @@ if __name__ == "__main__":
     ])
 
     models = {
-        #"openl3test": OpenL3(),
-        "musicnn": MusicNN()
+        "openl3": OpenL3(),
+        #"musicnn": MusicNN(),
+        #"vggish": Vggish(),
+        #vggish2": Vggish2(),
+        #"vggish_msd": Vggish2(model="MSD_vgg"),
+        #"random": RandomFeatures(dim=512)
     }
 
-    # generate_features("dataset_micro", models)
-
-    clip_path = "dataset_micro/clips/0dIoGTQXDh1wVnhIiSyYEa.mp3"
-    clip, sr = get_clip(clip_path, SAMPLE_RATE, N_SAMPLES)
-    spec = to_spectrogram(clip)
-    print(spec)
-
-    batch, all_spec = musicnn.extractor.batch_data(clip_path, 128, 32)
-    print(all_spec)
+    with open("dataset_large/tracks.json", "r", encoding="utf-8") as f:
+        track_dict = json.load(f)
+        n = len(list(track_dict))
+    generate_features("dataset_large", models, online=True, load_clips=True, selection=np.arange(600000, n))
 
 
     #maybe take last layer -> get 10 vectors -> average neighboring 2 to get 5 -> concat into 1000 dim vector
     #and compare against taking max_pool (753) and just averaging for all 10 sections -> you basically just capture harmonies
     #but hopefully well
 
-    #USE VIRTENV FOR ALL DEPENDENCIES

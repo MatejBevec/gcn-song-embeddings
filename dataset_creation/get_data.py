@@ -36,6 +36,8 @@ CLIENT_ID = "c283b507348c45ca8013d3f9a75a2af5"
 CLIENT_SECRET = "1801731ef5344912bda240575d411ef8"
 MAX_SONGS = 50 # max number of songs used from one album (<= 50)
 PLAYLIST_ALBUM_RATIO = 3 # fetch album for how many playlists
+MAX_QUERY_LENGTH = 3
+MIN_OFFSET = 900
 MAX_OFFSET = 1000 # max offset when searching (small means only whats popular now)
 MARKET = None # none or 2 character string
 DECADES = [1950,1960,1970,1980,1990,2000,2010] # query on of these decades (albums)
@@ -126,7 +128,7 @@ class DatasetCollector():
         ndc.save_dataset()
 
     def fetch_playlist(self):
-        rnd_offset = random.randrange(0, MAX_OFFSET)
+        rnd_offset = random.randrange(MIN_OFFSET, MAX_OFFSET)
         query = random_query()
         results = self.sp.search(q=query, type='playlist', limit=50, offset=rnd_offset, market=MARKET)
         #print(query)
@@ -276,6 +278,9 @@ class DatasetCollector():
             if i%50 == 0:
                 print(f"{i}/{len(to_download)}")
 
+        for i,track_id in enumerate(to_delete):
+            os.remove(os.path.join(self.clips_dir, track_id + ".mp3"))
+
         print("Done.")          
 
     def download_images(self):
@@ -302,6 +307,9 @@ class DatasetCollector():
         print(f"{len(all) - len(to_download)}/{len(all)} already stored, downloading the rest.")
         print("Ctrl + C to exit.")
 
+        if len(to_delete) > 0:
+            print(f"{len(to_delete)} unexpected files present.")
+
         for i,image_id in enumerate(urls):
             try:
                 #print(urls[image_id])
@@ -311,28 +319,117 @@ class DatasetCollector():
                 sys.exit()
             if i%50 == 0:
                 print(f"{i}/{len(to_download)}")
-        pass
+        
+        for i,track_id in enumerate(to_delete):
+            os.remove(os.path.join(self.images_dir, track_id + ".jpg"))
+        
+        print("Done.") 
 
     
+    # def add_track_genre(self):
+    #     # fetch info about top artist genre for every track
+
+    #     tracks = [t for t in self.tracks if "genre" not in t]
+    #     tracks_genre = []
+    #     #tracks_info = self.sp.tracks(track_ids)["tracks"]
+    #     n = len(tracks)
+    #     for i in range(0, n, 50):
+    #         batch_ids = tracks[i: min(i+50, n)]
+    #         tracks_info = self.sp.tracks(batch_ids)["tracks"]
+
+    #         for j in range(0, len(tracks_info)):
+    #             print(tracks_info[j]["artists"])
+    #             genres = tracks_info[j]["artists"][0]["genres"]
+    #             genre = genres[0] if genres else ""
+    #             track_id = tracks[i+j]
+
+    # def add_track_genre(self):
+    #     # fetch info about top artist genre for every track
+
+    #     tracks = [t for t in self.tracks if "genre" not in t]
+    #     tracks_genre = []
+    #     #tracks_info = self.sp.tracks(track_ids)["tracks"]
+    #     n = len(tracks)
+    #     for i in range(0, n):
+    #         id = tracks[i]
+    #         track_info = self.sp.track(id)
+    #         # genres = []
+    #         # for artist in track_info["artists"]:
+    #         #     genres.extend(artist["genres"])
+    #         artist = track_info["artists"][0]
+    #         artist_info = self.sp.artist(artist["id"])
+    #         genres = artist_info["genres"]
+    #         print(genres)
+    #         genre = genres[0] if genres else ""
+
     def add_track_genre(self):
         # fetch info about top artist genre for every track
 
+        all_genres = self.sp.recommendation_genre_seeds()
+        print(all_genres)
+
         tracks = [t for t in self.tracks if "genre" not in t]
+        albums = set([c for c in self.collections if self.collections[c]["type"] == "album"])
         tracks_genre = []
         #tracks_info = self.sp.tracks(track_ids)["tracks"]
         n = len(tracks)
+        for i in range(0, n, 50):
 
-        for i in range(0, 10, 50):
+            try:
+                batch_ids = tracks[i: min(i+50, n)]
+                tracks_info = self.sp.tracks(batch_ids)["tracks"]
+                artists = [track["artists"][0]["id"] for track in tracks_info]
+                artists_info = self.sp.artists(artists)["artists"]
+
+                for j in range(0, len(artists_info)):
+                    genres = artists_info[j]["genres"]
+                    #genre = genres[0] if genres else ""
+                    # Add to track
+                    track_id = tracks[i+j]
+                    self.tracks[track_id]["artist_genres"] = genres
+                    # Add to album
+                    album_id = self.tracks[track_id]["album_id"]
+                    if album_id in albums:
+                        self.collections[album_id]["artist_genres"] = genres
+            except:
+                pass
+            
+            print(f"{i+50}/{n}")
+
+            
+    def add_track_album(self):
+        # fetch info about top artist genre for every track
+
+        tracks = [t for t in self.tracks if "album" not in t or "release_date" not in t]
+        n = len(tracks)
+        print(n)
+        for i in range(0, n, 50):
+            print(i)
             batch_ids = tracks[i: min(i+50, n)]
             tracks_info = self.sp.tracks(batch_ids)["tracks"]
 
             for j in range(0, len(tracks_info)):
-                print(tracks_info[j]["artists"])
-                genres = tracks_info[j]["artists"][0]["genres"]
-                genre = genres[0] if genres else ""
+                album = tracks_info[j]["album"]["name"]
+                album = album if album else ""
                 track_id = tracks[i+j]
-            
+                self.tracks[track_id]["album"] = album
+                rel_date = tracks_info[j]["album"]["release_date"]
+                self.tracks[track_id]["release_date"] = rel_date
 
+
+
+    def track_to_image_mapping(self):
+        # make a album cover directory where filenames match track ids (not album ids)
+
+        tracks = list(self.tracks)
+        ti_dir = os.path.join(self.dir, "track_images")
+        if not os.path.isdir(ti_dir):
+            os.mkdir(ti_dir)
+
+        for tid in tracks:
+            image_fn = os.path.join(self.images_dir, self.tracks[tid]["album_id"] + ".jpg")
+            new_image_fn = os.path.join(ti_dir, tid + ".jpg")
+            shutil.copy2(image_fn, new_image_fn)
 
     def start(self):
 
@@ -356,7 +453,12 @@ class DatasetCollector():
 
 def random_query():
     chars = 'abcdefghijklmnopqrstuvwxyz'
-    rnd_char = chars[random.randrange(0, len(chars))]
+    qlen = random.randrange(1, MAX_QUERY_LENGTH+1)
+    rnd_char = ""
+
+    for i in range(qlen):
+        rnd_char += chars[random.randrange(0, len(chars))]
+
     rnd = random.random()
     if rnd > 0.5:
         rnd_query = rnd_char + "%"
@@ -429,12 +531,12 @@ def get_year(date_str):
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 2 or (sys.argv[1] not in ["create", "clips", "images", "genre"]):
+    if len(sys.argv) < 2 or (sys.argv[1] not in ["create", "clips", "images", "genre", "albums", "mapping"]):
         print("Unrecognized command.")
         exit()
     mode = sys.argv[1]
-    n = int(sys.argv[2]) if len(sys.argv) > 2 else 10
-    dc = DatasetCollector("dataset", n)
+    n = int(sys.argv[3]) if len(sys.argv) > 3 else 10
+    dc = DatasetCollector(sys.argv[2], n)
 
     #dc.add_track_genre() --> # "genres" not available with this version of API?
 
@@ -447,6 +549,11 @@ if __name__ == "__main__":
             dc.download_images()
         elif mode == "genre":
             dc.add_track_genre()
+        elif mode == "albums":
+            dc.add_track_album()
+        elif mode == "mapping":
+            dc.track_to_image_mapping()
+
     except KeyboardInterrupt:
         print("Exiting...")
 

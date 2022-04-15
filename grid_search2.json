@@ -1,0 +1,178 @@
+{
+    "0.0.1.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.001,
+            "epochs": 30,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.015186717377765656,
+        "hitrate@100": 0.12337502563051056
+    },
+    "0.1.1.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 5e-05,
+            "epochs": 30,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.015175703569588922,
+        "hitrate@100": 0.12012849429293965
+    },
+    "0.1.1.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 5e-05,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.015085600786151506,
+        "hitrate@100": 0.11951336203950516
+    },
+    "1.0.1.1.0": {
+        "params": {
+            "T": 10,
+            "lr": 0.001,
+            "epochs": 30,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.015000471768725104,
+        "hitrate@100": 0.12062743489850318
+    },
+    "1.1.1.1.0": {
+        "params": {
+            "T": 10,
+            "lr": 5e-05,
+            "epochs": 30,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.0148802152954112,
+        "hitrate@100": 0.11755860843414667
+    },
+    "0.1.0.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 5e-05,
+            "epochs": 10,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.01487721013234936,
+        "hitrate@100": 0.11215911420955506
+    },
+    "1.0.1.0.0": {
+        "params": {
+            "T": 10,
+            "lr": 0.001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.014660423091543367,
+        "hitrate@100": 0.12004647665914839
+    },
+    "0.0.1.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.01460532181864593,
+        "hitrate@100": 0.11597976898366483
+    },
+    "1.1.1.0.0": {
+        "params": {
+            "T": 10,
+            "lr": 5e-05,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.014497820134015318,
+        "hitrate@100": 0.12088715740550886
+    },
+    "1.1.0.1.0": {
+        "params": {
+            "T": 10,
+            "lr": 5e-05,
+            "epochs": 10,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.014493551161914593,
+        "hitrate@100": 0.10889207846353632
+    },
+    "1.0.0.1.0": {
+        "params": {
+            "T": 10,
+            "lr": 0.001,
+            "epochs": 10,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.014489519467171322,
+        "hitrate@100": 0.10431276057685736
+    },
+    "1.0.0.0.0": {
+        "params": {
+            "T": 10,
+            "lr": 0.001,
+            "epochs": 10,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.014345757176330957,
+        "hitrate@100": 0.10701250768915317
+    },
+    "0.0.0.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.001,
+            "epochs": 10,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.014117848468833781,
+        "hitrate@100": 0.10831112022418153
+    },
+    "1.1.0.0.0": {
+        "params": {
+            "T": 10,
+            "lr": 5e-05,
+            "epochs": 10,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.014089985017185832,
+        "hitrate@100": 0.10727906499897479
+    },
+    "0.0.0.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.001,
+            "epochs": 10,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.013738452058752341,
+        "hitrate@100": 0.10602829608365799
+    },
+    "0.1.0.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 5e-05,
+            "epochs": 10,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.01367627155570263,
+        "hitrate@100": 0.10539949422459162
+    }
+}
