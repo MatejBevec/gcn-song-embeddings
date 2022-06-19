@@ -122,9 +122,12 @@ if __name__ == "__main__":
     param_grid = {
         "T": [3],
         "lr": [1e-4],
-        "epochs": [3, 30],
-        "n_layers": [2, 4],
-        "hard_negatives": [False]
+        "epochs": [30],
+        "n_layers": [2],
+        "hard_negatives": [False],
+        "decay": [0.8, 0.95],
+        "margin": [1e-5, 1e-3],
+        "out_dim": [128, 256]
     }
 
     dataset = SpotifyGraph("./dataset_small", "./dataset_small/features_openl3")

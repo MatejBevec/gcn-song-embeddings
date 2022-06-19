@@ -382,11 +382,11 @@ def low_degree_accuracy(knn_mat, g, test_positives, K, degree_thr, acc_func, que
     selection = g.in_degrees(queries) <= degree_thr
     selection_indices = queries[selection]
 
-    print(test_positives[:30, :])
+    #print(test_positives[:30, :])
     pos_selection = np.array([test_positives[i, 0] in selection_indices for i in range(test_positives.shape[0])])
     low_deg_positives = test_positives[pos_selection, :]
 
-    print(low_deg_positives[:20, :])
+    #print(low_deg_positives[:20, :])
 
     #score = acc_func(knn_mat, low_deg_positives, K)
     score = hit_rate(knn_mat, low_deg_positives, 500)
@@ -557,17 +557,37 @@ if __name__ == "__main__":
     #     "SameTestModel": (None, knn_mat)
     # }
 
-    dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
+    dataset = SpotifyGraph("./dataset_small", "./dataset_small/features_openl3")
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
-    pos = dataset.load_positives("./dataset_micro/positives.json")
-    knn_dict = get_knn_dict(MODELS, g, track_ids, pos, pos, None, BASE_DIR)
+    pos = dataset.load_positives("./dataset_small/positives.json")
+
+    models =  {"OpenL3": EmbLoader("dataset_small/features_openl3")}
+    knn_dict = get_knn_dict(models, g, track_ids, pos, pos, None, BASE_DIR)
+    _, knn_mat = knn_dict["OpenL3"]
+
+
+
+
+
+    all_indices = torch.arange(0, len(track_ids))
+    sel_indices = all_indices[g.in_degrees(all_indices) <= 1]
+    sel = np.array([pos[i, 0] in sel_indices for i in range(pos.shape[0])])
+
+    score = mrr(knn_mat, pos, 100)
+    print(score)
+
+    score = mrr(knn_mat, pos[sel, :], 100)
+    print(score)
+
+    low_deg_score = low_degree_accuracy(knn_mat, g, pos, 100, 2, mrr)
+    print(low_deg_score)
 
     # results = compute_results_table(knn_dict, pos, g)
     # print("\n", results)
     # results.to_csv("results.csv")
 
-    results = compute_beyond_accuracy_table(knn_dict, pos, g, features)
-    print(results)
+    #results = compute_beyond_accuracy_table(knn_dict, pos, g, features)
+    #print(results)
 
     #examine_knn_weights(knn_dict)
     #examine_emb(["PinSage", "PinSageHN"], track_ids)

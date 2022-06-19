@@ -70,17 +70,17 @@ def eval_baselines():
     n_items = torch.arange(0, len(track_ids))
 
     baselines = {
-        "Random": Random(),
-        "RandomFeatures": EmbLoader("dataset_small/features_random"),
+        ###"Random": Random(),
+        ###"RandomFeatures": EmbLoader("dataset_small/features_random"),
         #"Snore": Snore(),
-        "node2vec": FastNode2Vec(),
+        ###"node2vec": FastNode2Vec(),
         "PageRank": PersPageRank(),
-        "OpenL3": EmbLoader("dataset_small/features_openl3"),
-        "VGGish": EmbLoader("dataset_small/features_vggish_msd"),
-        "MusicNN": EmbLoader("dataset_small/features_musicnn"),
+        ###"OpenL3": EmbLoader("dataset_small/features_openl3"),
+        ###"VGGish": EmbLoader("dataset_small/features_vggish_msd"),
+        ###"MusicNN": EmbLoader("dataset_small/features_musicnn"),
         # "Preferential": Preferential(),
         # "JaccardIndex": JaccardIndex(),
-        "ColTrackCfALS": ColTrackCF(algo="als"),
+        ###"ColTrackCfALS": ColTrackCF(algo="als"),
         "TrackTrackCfALS": TrackTrackCF(algo="als"),
         ##"ColTrackCfBPR": ColTrackCF(algo="bpr"),
         #"TrackTrackCfBPR": TrackTrackCF(algo="bpr"),
@@ -91,17 +91,18 @@ def eval_baselines():
         "PinSageOpenL3": EmbLoader("runs/small_openl3_pr3/emb"),
         #"PinSageOpenL3t10": EmbLoader("runs/small_openl3_T10/emb"),
         #"PinSageOpenL3LFM": EmbLoader("runs/small_openl3_lfm_test/emb"),
-        "PinSageOpenL3LFMfull": EmbLoader("runs/small_openl3_lfm/emb"),
+        ###"PinSageOpenL3LFMfull": EmbLoader("runs/small_openl3_lfm/emb"),
         #"PinSageOpenL3LFMlarge": EmbLoader("runs/small_openl3_lfm_large/emb"),
         # "PinSageOpenl3Mixed": EmbLoader("runs/small_openl3_mixed/emb"),
         ##"PinSageVggishLFMlarge": EmbLoader("runs/small_vggish_lfm_large/emb"),
         ##"PinSageMusicNNLFMlarge": EmbLoader("runs/small_musicnn_lfm_large_2/emb"),
-        "PinSageOpenL3longLFMlarge": EmbLoader("runs/small_openl3_lfm_large_2/emb"),
+        ###"PinSageOpenL3longLFMlarge": EmbLoader("runs/small_openl3_lfm_large_2/emb"),
         #"PinSageRandomLFMlarge": EmbLoader("runs/small_random_lfm_large/emb"),
-        "PinSageT10OpenL3LFMlarge": EmbLoader("runs/small_openl3_lfm_large_3/emb"),
+        ###"PinSageT10OpenL3LFMlarge": EmbLoader("runs/small_openl3_lfm_large_3/emb"),
         # "PinSageVggish": EmbLoader("runs/small_vggish/emb"),
         # "PinSageMusicNN": EmbLoader("runs/small_musicnn/emb"),
-        "PinSageOpenL3LFMBest": EmbLoader("runs_gs1/gridsearch#0.1.1.0.1/emb")
+        "PinSageOpenL3LFMBest": EmbLoader("runs_gs1/gridsearch#0.1.1.0.1/emb"),
+        "PinSageOpenL3LFMBestBest": EmbLoader("runs_gs4/gridsearch#0.0.0.0.0.1.0.0/emb")
     }
     
     BL_DIR = "./baselines_lfm"

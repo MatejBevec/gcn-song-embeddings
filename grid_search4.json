@@ -1,0 +1,114 @@
+{
+    "0.0.0.0.0.1.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.95,
+            "margin": 1e-05,
+            "out_dim": 128
+        },
+        "mrr": 0.022601344592382156,
+        "hitrate@100": 0.12049757364500034
+    },
+    "0.0.0.0.0.0.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.8,
+            "margin": 1e-05,
+            "out_dim": 128
+        },
+        "mrr": 0.0218558677084658,
+        "hitrate@100": 0.11938122251839701
+    },
+    "0.0.0.0.0.1.0.1": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.95,
+            "margin": 1e-05,
+            "out_dim": 256
+        },
+        "mrr": 0.021800524450831554,
+        "hitrate@100": 0.11762695646230606
+    },
+    "0.0.0.0.0.0.0.1": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.8,
+            "margin": 1e-05,
+            "out_dim": 256
+        },
+        "mrr": 0.021672818577812242,
+        "hitrate@100": 0.1187433075889094
+    },
+    "0.0.0.0.0.1.1.1": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.95,
+            "margin": 0.001,
+            "out_dim": 256
+        },
+        "mrr": 0.020052561375963743,
+        "hitrate@100": 0.11163511266033309
+    },
+    "0.0.0.0.0.1.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.95,
+            "margin": 0.001,
+            "out_dim": 128
+        },
+        "mrr": 0.01990121385794701,
+        "hitrate@100": 0.10830884195657622
+    },
+    "0.0.0.0.0.0.1.1": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.8,
+            "margin": 0.001,
+            "out_dim": 256
+        },
+        "mrr": 0.01961102087322339,
+        "hitrate@100": 0.11051876153372975
+    },
+    "0.0.0.0.0.0.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false,
+            "decay": 0.8,
+            "margin": 0.001,
+            "out_dim": 128
+        },
+        "mrr": 0.018060141767815136,
+        "hitrate@100": 0.10623561843574146
+    }
+}

@@ -1,0 +1,46 @@
+{
+    "0.0.1.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.01506024055569458,
+        "hitrate@100": 0.12220627434898503
+    },
+    "0.0.1.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 30,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.014711864315545282,
+        "hitrate@100": 0.11621443054701205
+    },
+    "0.0.0.1.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 3,
+            "n_layers": 4,
+            "hard_negatives": false
+        },
+        "mrr": 0.01423567190295799,
+        "hitrate@100": 0.10589387829494452
+    },
+    "0.0.0.0.0": {
+        "params": {
+            "T": 3,
+            "lr": 0.0001,
+            "epochs": 3,
+            "n_layers": 2,
+            "hard_negatives": false
+        },
+        "mrr": 0.014215826362888907,
+        "hitrate@100": 0.10853666871710752
+    }
+}

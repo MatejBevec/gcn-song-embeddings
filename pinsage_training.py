@@ -144,7 +144,9 @@ class PinSage():
         
         self.n_layers = 2
         self.in_dim = features.shape[1]
-        self.dimensions = (self.in_dim, 512, 128) # (in/features, hidden, out/embedding)
+        self.hidden_dim = 512
+        self.out_dim = 128
+        self.dimensions = (self.in_dim, self.hidden_dim, self.out_dim)
         self.n_hops = 500
         self.alpha = 0.85
         self.T = 3
@@ -157,8 +159,9 @@ class PinSage():
                                     self.n_hops, self.alpha, self.T, self.nbhds)
         
         self.lr = 1e-3
+        self.decay = 0.8
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.8)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.decay)
         self.margin = 1e-5 # no clue what this should be
         self.epochs = 3
         self.batch_size = 128
