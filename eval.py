@@ -3,6 +3,9 @@ from os import path
 import time
 import math
 import inspect
+import shutil
+import json
+import re
 
 import pandas as pd
 import numpy as np
@@ -22,10 +25,11 @@ from spotify_graph import SpotifyGraph
 #import pinsage_training as pst
 
 from baselines import PredictionModel, EmbeddingModel, \
-    Snore, PersPageRank, EmbLoader, Random, Preferential, JaccardIndex
+    Snore, PersPageRank, EmbLoader, Random, Preferential, JaccardIndex, TrackTrackCF
+from baselines import to_track_track_matrix
 
 PRECOMP_K = 1000
-BASE_DIR = "./baselines"
+BASE_DIR = "./baselines_lfm"
 KNN_DIR = "./baselines_micro/knn"
 EMB_DIR = "./baselines_micro/emb"
 
@@ -46,33 +50,44 @@ MODELS = {
 # GOTTA TRAIN FIRST!
 
 def precompute_model(model, model_name, g, ids, train_pos, test_pos, features, save_dir):
-    #emb_dir = os.path.join(EMB_DIR, model_name)
-    #emb_computed = os.path.isdir(emb_dir) and len(os.listdir(emb_dir)) > 0
+    emb_dir = os.path.join(save_dir, "emb", model_name)
+    emb_computed = os.path.isdir(emb_dir) and len(os.listdir(emb_dir)) > 0
     knn_path = os.path.join(save_dir, "knn", model_name + ".pt")
     knn_computed = os.path.isfile(knn_path)
 
     #todo: move knn_to_emb here and allow only loading emb.
     print()
+    train_time = 0
+    emb_time = 0
     if not knn_computed:
         print(f"Training {model_name} model...")
+        t0 = time.time()
         model.train(g, ids, train_pos, test_pos, features)
+        train_time = time.time() - t0
         if isinstance(model, EmbeddingModel):
             print("Generating and saving embeddings...")
-            save_embedding(model, model_name, ids, save_dir)
+            emb_time = save_embedding(model, model_name, ids, save_dir)
         print("Generating and saving knn list...")
-        save_knn(model, model_name, ids, save_dir)
+        save_knn(model, model_name, ids, save_dir, train_time=train_time, emb_time=emb_time)
+
 
 def save_embedding(model, model_name, ids, save_dir):
 
     save_dir = os.path.join(save_dir, "emb", model_name)
-    os.mkdir(save_dir) if not os.path.isdir(save_dir) else None
+    os.makedirs(save_dir) if not os.path.isdir(save_dir) else None
     all_nodes = torch.arange(0, len(ids), dtype=torch.int64) # might have to do it in batches
     
+    emb_time = 0
     if len(os.listdir(save_dir)) == 0:
+        t0 = time.time()
         emb = model.embed(all_nodes)
+        emb_time = time.time() - t0
         for i in range(emb.shape[0]):
             save_path = os.path.join(save_dir, ids[i] + ".pt")
+    
             torch.save(emb[i,:].clone().detach(), save_path)
+    
+    return emb_time
 
 def load_embedding(model_name, ids, save_dir):
 
@@ -94,11 +109,14 @@ def load_embedding(model_name, ids, save_dir):
     
     return torch.stack(emb_list, dim=0)
 
-def save_knn(model, model_name, ids, save_dir):
+def save_knn(model, model_name, ids, save_dir, train_time=0, emb_time=0):
 
-    save_path = os.path.join(save_dir, "knn", model_name + ".pt")
+    save_dir = os.path.join(save_dir, "knn")
+    os.makedirs(save_dir) if not os.path.isdir(save_dir) else None
+    save_path = os.path.join(save_dir, model_name + ".pt")
     all_nodes = torch.arange(0, len(ids), dtype=torch.int64)
 
+    knn_time = 0
     if not os.path.isfile(save_path):
         # compute knn in batches due to memory constraints
         b_size = 1000
@@ -108,15 +126,22 @@ def save_knn(model, model_name, ids, save_dir):
         pbar = tqdm(total=n, desc="Computing KNN")
         for i in range(0, n, b_size):
             end = min(i+b_size, n)
+            t0 = time.time()
             b_knn_w, b_knn_n = model.knn(all_nodes[i:end], PRECOMP_K) # (weight_mat, node_mat)
             knn_w_list.append(b_knn_w)
             knn_n_list.append(b_knn_n)
+            knn_time += time.time() - t0
             #print(f"knn: {end}/{n} done")
             pbar.update(b_size)
         torch.save((torch.cat(knn_w_list, dim=0), 
-                    torch.cat(knn_n_list, dim=0)),
+                    torch.cat(knn_n_list, dim=0),
+                    train_time,
+                    emb_time, # BODGE: save train, emb., and knn constr. times together with knn list
+                    knn_time
+                    ),
                 save_path)
         pbar.close()
+
 
 def load_knn(model_name, ids, save_dir):
 
@@ -156,11 +181,25 @@ class LazyKnnDict():
         self.models = model_names
         self.save_dir = save_dir
         self.idx = 0
+        self.times = {m_name: None for m_name in model_names}
     
     def __getitem__(self, m_name):
-        knn_w, knn_n = load_knn(m_name, self.all_nodes, self.save_dir)
-        #print(knn_n[:5, :3])
+        tup = load_knn(m_name, self.all_nodes, self.save_dir)
+        knn_w, knn_n = tup[0], tup[1].to(torch.int64)
+        #print(knn_n[:10, :3])
         return knn_w, knn_n
+
+    # BODGE BODGE BODGE
+    # TODO: REFACTOR THIS ATROCITY
+    def get_times(self, m_name):
+        if not self.times[m_name]:
+            tpl = load_knn(m_name, self.all_nodes, self.save_dir)
+            if len(tpl) == 5:
+                _, _, traint, embt, knnt = tpl
+            else:
+                traint, embt, knnt = 0, 0, 0
+            self.times[m_name] = (traint, embt, knnt)
+        return self.times[m_name]
 
     def __len__(self):
         return len(self.models)
@@ -302,16 +341,16 @@ def inter_diversity(knn_mat, test_positives, K, N, n_pairs=10000):
     one_hot_mat = one_hot_mat.tocsr()
 
     # Compute cosine similarity between [n_pairs] random pairs of recommendation sets
-    similarities = np.ndarray(n_pairs)
+    distances = np.ndarray(n_pairs)
     rnd = np.random.randint(0, n, (n_pairs, 2))
     for i in range(0, n_pairs):
         v1 = one_hot_mat[rnd[i, 0], :].toarray().squeeze()
         v2 = one_hot_mat[rnd[i, 1], :].toarray().squeeze()
-        sim = sp.spatial.distance.cosine(v1, v2)
-        similarities[i] = sim
+        cos = sp.spatial.distance.cosine(v1, v2)
+        distances[i] = cos
 
-    avg_sim = np.mean(similarities)
-    return 1 - avg_sim
+    avg_dist = np.mean(distances)
+    return avg_dist
 
 def inter_diversity_matrix(knn_mat, test_positives, K, N, n_examples=10000):
     # return inter-list diversity (personalization) with respect to indices? over all recommendations
@@ -375,33 +414,42 @@ def degree_dist(knn_mat, g, test_positives, K, queries=None):
     degree_dist = torch.unique(degrees, sorted=True, return_counts=True)
     return degree_dist
 
-def low_degree_accuracy(knn_mat, g, test_positives, K, degree_thr, acc_func, queries=None):
+def low_degree_accuracy(knn_mat, g, test_positives, K, degree_thr, acc_func, queries=None, track_ids=None):
     # generate recommendation, keep only queries with degree under "degree_thr"
     # compute "acc_fun" on these low-degree queries
     queries = torch.arange(0, knn_mat.shape[0], dtype=torch.int64) if not queries else queries
-    selection = g.in_degrees(queries) <= degree_thr
-    selection_indices = queries[selection]
+    sel_indices = queries[g.in_degrees(queries) <= degree_thr]
 
-    #print(test_positives[:30, :])
-    pos_selection = np.array([test_positives[i, 0] in selection_indices for i in range(test_positives.shape[0])])
+    pos_selection = np.array([test_positives[i, 0] in sel_indices for i in range(test_positives.shape[0])])
     low_deg_positives = test_positives[pos_selection, :]
 
-    #print(low_deg_positives[:20, :])
-
-    #score = acc_func(knn_mat, low_deg_positives, K)
-    score = hit_rate(knn_mat, low_deg_positives, 500)
+    score = acc_func(knn_mat, low_deg_positives, K)
+    #score = hit_rate(knn_mat, low_deg_positives, 500)
     return score
 
+def low_co_accuracy(knn_mat, g, test_positives, K, co_thr, acc_func, queries=None, track_ids=None):
+    # compute "acc_fun" on queries with under co_thr track-track co-occurences
+    queries = torch.arange(0, knn_mat.shape[0], dtype=torch.int64) if not queries else queries
+    ids = np.arange(0, knn_mat.shape[0])
+    ttmat = to_track_track_matrix(ids, test_positives)
+    co_counts = torch.from_numpy(np.sum(ttmat, axis=1)).squeeze()[queries]
 
-# PLAYLIST CONTINUATION METRICS
-# TODO
+    sel_indices = queries[co_counts <= co_thr]
+    sel_indices = set(sel_indices.tolist())
+    
+    query_list = test_positives[:, 0].squeeze().tolist()
+    sel_positives = np.array([q in sel_indices for q in query_list])
+    low_co_positives = test_positives[sel_positives, :]
+
+    score = acc_func(knn_mat, low_co_positives, K)
+    return score
 
 
 
 
 # PRESENT RESULTS
 
-def compute_results_table(knn_dict, test_positives, g):
+def compute_results_table(knn_dict, test_positives, g, times=True):
     
     k_levels = [10, 100, 500]
     results = {}
@@ -410,14 +458,26 @@ def compute_results_table(knn_dict, test_positives, g):
         model_results = {}
         _, knn_mat = knn_dict[model]
         max_k = knn_mat.shape[1]
+
         for k in k_levels:
             col_name = f"hr (k={k})"
             model_results[col_name] = hit_rate(knn_mat, test_positives, k)
-        model_results["mrr"] = mrr(knn_mat, test_positives, max_k, 1)
-        #temp
+
+        model_results["mrr"] = mrr(knn_mat, test_positives, 1000, 1)
+
         model_results["low-degree accuracy"] = low_degree_accuracy(
-            knn_mat, g, test_positives, k, degree_thr=2, acc_func=hit_rate)
+            knn_mat, g, test_positives, 1000, degree_thr=1, acc_func=mrr)
         results[model] = model_results
+
+        model_results["low-co accuracy"] = low_co_accuracy(
+            knn_mat, g, test_positives, 1000, co_thr=1, acc_func=mrr)
+        results[model] = model_results
+
+        if times:
+            traint, embt, knnt = knn_dict.get_times(model)
+            model_results["t (train)"] = traint
+            model_results["t (emb)"] = embt
+            model_results["t (knn)"] = knnt
 
     return pd.DataFrame.from_dict(results, orient="index")
 
@@ -438,7 +498,7 @@ def compute_beyond_accuracy_table(knn_dict, test_positives, g, features):
             "inter diversity": inter_diversity(knn_mat, test_positives, k, features.shape[0]),
             "coverage": coverage(knn_mat, test_positives, K=100),
             "average degree": average_degree(knn_mat, g, test_positives, k),
-            "low-degree accuracy": low_degree_accuracy(knn_mat, g, test_positives, max_k, degree_thr=3, acc_func=mrr)
+            #"low-degree accuracy": low_degree_accuracy(knn_mat, g, test_positives, 100, degree_thr=1, acc_func=hit_rate)        
         }
         results[model] = model_results
 
@@ -455,7 +515,7 @@ def examine_knn_weights(knn_dict):
         print(f"{m_name}:\n")
         knn_w, _ = knn_dict[m_name]
         ranks = [0,1,2,3, 10, 50, 100, 500]
-        print(knn_w[0:5, ranks])
+        print(knn_w[0:10, ranks])
 
 def examine_emb(models, ids, save_dir):
 
@@ -471,6 +531,10 @@ def find_knn(dataset, model_features, query, K):
 def print_knn(g, ids, dataset, knn_w, knn_n):
     # prints info about the query and its neighbors in a readable format
 
+    print(knn_n)
+    print(type(knn_n))
+    
+
     print("\u001b[36m Nearest neighbors:")
     for i in range(0, knn_n.shape[0]):
         track = dataset.tracks[ids[knn_n[i]]]
@@ -484,23 +548,123 @@ def print_query(q, ids, dataset):
     print("\033[0;33m", info["name"], "\033[0m")
     print(info["artist"])
 
-def crawl_embedding(knn_dict, ids, dataset, g, model_names):
-    # interactively crawl embedding by selecting nearest neighbors
+def crawl_embedding(knn_dict, ids, dataset, g, model_names=None):
+    # interactively crawl embedding by selecting random queries
 
     model_names = knn_dict.keys() if not model_names else model_names
     K = 10
 
     q = torch.randint(0, len(ids), (1,))
     while(True):
+        knn_lists = []
         print_query(q, ids, dataset)
-        for m_name in model_names:
+        for i,m_name in enumerate(model_names):
             knn_w, knn_n = knn_dict[m_name]
-            print(f"{m_name}:")
+            knn_lists.append(knn_n)
+            print(f"[{i}]{m_name}:")
             print_knn(g, ids, dataset, knn_w[q,0:K].squeeze(), knn_n[q,0:K].squeeze())
             print()
         
         choice = input("Select song or enter r for random:")
+        print(choice)
+        if choice == "e":
+            for i,m_name in enumerate(model_names):
+                export_recommendation_list(g, ids, dataset, q, knn_lists[i], m_name)
+            export_recommendation_figure(g, ids, dataset, q, knn_dict, model_names)
         q = torch.randint(0, len(ids), (1,))
+
+
+def export_recommendation_lists(g, ids, dataset, queries, knn_dict, model_names=None):
+
+
+
+    model_names = knn_dict.keys() if not model_names else model_names
+    for q in queries:
+        for m_name in model_names:
+            knn_w, knn_n = knn_dict[m_name]
+            q_index = ids.index(q)
+            export_recommendation_list(g, ids, dataset, q_index, knn_n, m_name)
+        export_recommendation_figure(g, ids, dataset, q_index, knn_dict, model_names)
+
+
+def export_recommendation_list(g, ids, dataset, q, knn_n, m_name, k=5):
+    
+    q = q.item() if isinstance(q, torch.Tensor) else q
+    rec_list = [q]
+    rec_list.extend(knn_n[q, :k].squeeze().tolist())
+    print(rec_list)
+    info_list = []
+    dir_name = os.path.join("examples", dataset.tracks[ids[q]]['name'], m_name)
+    if not os.path.isdir(dir_name):
+        os.makedirs(dir_name)
+
+    for i,tr in enumerate(rec_list):
+        track_info = dataset.tracks[ids[tr]]
+        info_list.append({
+            "title": track_info["name"],
+            "artist": track_info["artist"],
+            "album": track_info["album"]
+        })
+        export_track_image(dataset.base_dir, dir_name, track_info, i)
+
+    with open(os.path.join(dir_name, "list.json"), "w", encoding="utf-8") as f:
+        json.dump(info_list, f, indent=2)
+
+
+
+def export_track_image(dataset_dir, save_dir, track_info, rank):
+    prefix = f"[{'q' if rank == 0 else rank}]"
+    name = track_info["name"]
+    name = re.sub('[/]', '', name)
+    album_id = track_info["album_id"]
+    src_path = os.path.join(dataset_dir, "images", album_id + ".jpg")
+    if not os.path.isdir(save_dir):
+        os.makedirs(save_dir)
+    dest_path = os.path.join(save_dir, name + ".jpg")
+    shutil.copy(src_path, dest_path)
+
+
+def export_recommendation_figure(g, ids, dataset, q, knn_dict, model_names, k=4):
+
+    with open("examples_template.tex", "r", encoding="utf-8") as f:
+        template = f.read()
+
+    q = q.item() if isinstance(q, torch.Tensor) else q
+    dir_name = os.path.join("examples",dataset.tracks[ids[q]]['name'])
+    fig_path = os.path.join(dir_name, "figure.tex")
+    print(fig_path)
+    if not os.path.isdir(dir_name):
+        os.makedirs(dir_name)
+    
+    for m,m_name in enumerate(model_names):
+
+        # GET SONG INFO
+        _, knn_n = knn_dict[m_name]
+        rec_list = [q]
+        rec_list.extend(knn_n[q, :k].squeeze().tolist())
+        print(rec_list)
+        info_list = []
+
+        template = template.replace(f"<method_{m}>", m_name)
+
+        for i,tr in enumerate(rec_list):
+            track_info = dataset.tracks[ids[tr]]
+            info_list.append({
+                "title": track_info["name"],
+                "artist": track_info["artist"],
+                "album": track_info["album"]
+            })
+            cover_path = os.path.join(dir_name, "covers", track_info["name"] + ".jpg")
+            export_track_image(dataset.base_dir, os.path.join(dir_name, "covers"), track_info, i)
+        
+            template = template.replace(f"<cover_{m}_{i}>", cover_path)
+            template = template.replace(f"<title_{m}_{i}>", track_info["name"])
+            template = template.replace(f"<artist_{m}_{i}>", track_info["artist"])
+            template = template.replace(f"<album_{m}_{i}>", track_info["album"])
+
+    with open(fig_path, "w", encoding="utf-8") as f:
+        f.write(template)  
+
 
 
 def plot_tsne(dataset, model_features):
@@ -526,7 +690,7 @@ if __name__ == "__main__":
     # img_dir = "./dataset_mini/images"
     # imgs = []
     # resize = torchvision.transforms.Resize((128,128))
-    # for fn in os.listdir(img_dir)[200:500]:
+    # for fn in os.listdir(img_dir)[200:1000]:
     #     img = resize( torchvision.io.read_image(os.path.join(img_dir, fn), mode=ImageReadMode.RGB) )
     #     imgs.append(img)
     #     print(img.shape)
@@ -557,30 +721,54 @@ if __name__ == "__main__":
     #     "SameTestModel": (None, knn_mat)
     # }
 
-    dataset = SpotifyGraph("./dataset_small", "./dataset_small/features_openl3")
+    dataset = SpotifyGraph("./dataset_final_intersect", None)#"./dataset_small/features_openl3")
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
-    pos = dataset.load_positives("./dataset_small/positives.json")
+    pos = dataset.load_positives("./dataset_final_intersect/positives_lfm.json")
+    train_pos, test_pos = dataset.load_positives_split("./dataset_final_intersect/positives_lfm.json")
 
-    models =  {"OpenL3": EmbLoader("dataset_small/features_openl3")}
-    knn_dict = get_knn_dict(models, g, track_ids, pos, pos, None, BASE_DIR)
-    _, knn_mat = knn_dict["OpenL3"]
+    #models =  {"OpenL3": EmbLoader("dataset_small/features_openl3")}
+    #models =  {"PinSageOpenL3LFMBestBest": EmbLoader("runs_gs4/gridsearch#0.0.0.0.0.1.0.0/emb")}
+    models =  {"TrackTrackCfALS": TrackTrackCF()}#, "PageRank": PersPageRank()}
+    knn_dict = get_knn_dict(models, g, track_ids, train_pos, test_pos, None, "./baselines_final_intersect")
+    #_, knn_mat = knn_dict["TrackTrackCfALS"]
+    #_, knn_mat = knn_dict["PageRank"]
+    _, knn_mat = knn_dict["ColTrackCfALS"]
 
 
+    # all_indices = torch.arange(0, len(track_ids))
+    # print(all_indices[:10])
+    # sel_indices = all_indices[g.in_degrees(all_indices) <= 1]
+    # print(sel_indices[:10])
+    # print(len(sel_indices))
+    # sel = np.array([pos[i, 0] in sel_indices for i in range(pos.shape[0])])
+    # print(sel[:10])
+    # indices_in_pos = np.unique(pos[sel, 0])
+    # print(indices_in_pos[:10])
+    # print(len(indices_in_pos))
 
+    track_ids = np.array(track_ids)
 
-
-    all_indices = torch.arange(0, len(track_ids))
-    sel_indices = all_indices[g.in_degrees(all_indices) <= 1]
-    sel = np.array([pos[i, 0] in sel_indices for i in range(pos.shape[0])])
-
-    score = mrr(knn_mat, pos, 100)
+    score = mrr(knn_mat, test_pos, 1000)
+    print("\n normal mrr:")
     print(score)
-
-    score = mrr(knn_mat, pos[sel, :], 100)
-    print(score)
-
-    low_deg_score = low_degree_accuracy(knn_mat, g, pos, 100, 2, mrr)
+    low_deg_score = low_degree_accuracy(knn_mat, g, test_pos, 1000, 1, mrr, track_ids=track_ids)
+    print("\n low degree mrr:")
     print(low_deg_score)
+    low_co_score = low_co_accuracy(knn_mat, g, pos, 1000, 1, mrr, track_ids=track_ids)
+    print("\n low co mrr")
+    print(low_co_score)
+
+
+    score = hit_rate(knn_mat, test_pos, 100)
+    print("\n normal hitrate:")
+    print(score)
+    low_deg_score = low_degree_accuracy(knn_mat, g, test_pos, 100, 1, hit_rate, track_ids=track_ids)
+    print("\n low degree hitrate:")
+    print(low_deg_score)
+    low_co_score = low_co_accuracy(knn_mat, g, pos, 100, 1, hit_rate, track_ids=track_ids)
+    print("\n low co hitrate")
+    print(low_co_score)
+
 
     # results = compute_results_table(knn_dict, pos, g)
     # print("\n", results)

@@ -21,3 +21,5 @@ dataset_*/images
 /export
 /export.zip
 nohup*.out
+
+!dataset_final_intersect/features_*

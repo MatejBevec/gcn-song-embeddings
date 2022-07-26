@@ -7,6 +7,8 @@ import numpy as np
 import dgl
 import torch
 from tqdm import tqdm
+from scipy.sparse import csr_matrix, lil_matrix
+import matplotlib.pyplot as plt
 
 class SpotifyGraph():
 
@@ -33,7 +35,6 @@ class SpotifyGraph():
         # todo: load batches into memory instead of whole dataset
         self.ft_dir = features_dir
         self.features_dict = {}
-        
 
     def to_dgl_graph(self):
 
@@ -81,16 +82,6 @@ class SpotifyGraph():
         self.g, self.track_ids, self.col_ids, self.features = g, track_ids, col_ids, features
         return g, track_ids, col_ids, features
 
-    def to_col_track_matrix(self):
-        if not self.g:
-            self.to_dgl_graph()
-
-        n_tracks, n_cols = len(track_ids), len(col_ids)
-        mat = np.zeros((n_cols, n_tracks))
-        for col in range(n_tracks, n_tracks+n_cols):
-            neighbors = list( set(g.successors(col)) | set(g.predecessors(col)) )
-            mat[col-n_tracks, neighbors] = 1
-        return mat
 
     def load_positives(self, pos_pth):
 
@@ -116,16 +107,6 @@ class SpotifyGraph():
         train, test = pos[:cut_point, :], pos[cut_point:, :]
         return train, test
 
-    def to_track_track_matrix(self, track_ids, positives):   
-        n = len(track_ids)
-        mat = np.zeros((n, n))
-        for i in range(positives.shape[0]):
-            a = positives[i, 0]
-            b = positives[i, 1]
-            mat[a, b] = 1
-        return mat
-
-
     def load_batch_features(self, ids):
         
         batch_features = {}
@@ -142,12 +123,99 @@ class SpotifyGraph():
         return f"{name} - {artist}"
 
 
+
+def _to_track_track_matrix(ids, positives):
+    n = len(ids)
+    pos_tuples = [(positives[i, 0], positives[i, 1]) for i in range(positives.shape[0])]
+    pos_tuples.sort(key=lambda x: x[1])
+    mat = lil_matrix((n, n), dtype=np.int32)
+    for (a, b) in pos_tuples:
+        if mat[a, b]:
+            mat[a, b] += 1
+        else:
+            mat[a, b] = 1
+    mat = mat.tocsr(copy=True)
+    return mat
+
+def get_positives_deg_dist(track_ids, g, positives, repeats=True):
+    if repeats:
+        degrees = g.in_degrees(torch.flatten(positives))
+    else:
+        ids_in_positives = torch.unique(positives)
+        degrees = g.in_degrees(ids_in_positives)
+
+    print("a")
+    return degrees.numpy(), np.unique(degrees.numpy(), return_counts=True)
+
+def get_graph_deg_dist(track_ids, g, positives):
+    degrees = g.in_degrees(track_ids)
+    return degrees.numpy(), np.unique(degrees.numpy(), return_counts=True)
+
+def get_positives_cooccurence_dist(track_ids, g, positives):
+    # with repeats!
+    graph_co = get_graph_cooccurence_dist(track_ids, g, positives)[0]
+    positives_co = graph_co[positives.flatten().numpy()]
+    return positives_co, np.unique(positives_co, return_counts=True)
+
+def get_graph_cooccurence_dist(track_ids, g, positives):
+    mat = _to_track_track_matrix(track_ids, positives)
+    co =  np.asarray(np.sum(mat, axis=1))
+    return co, np.unique(co, return_counts=True)
+
+def get_graph_positives_intersect(track_ids, g, positives):
+    ids_in_positives = torch.unique(positives)
+    intersect = set(ids_in_positives.tolist()) & set(track_ids)
+    return np.array(list(intersect))
+
+
+
+
 if __name__ == "__main__":
 
-    dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
+    dataset = SpotifyGraph("./dataset_final_intersect", None)#, "./dataset_final_intersect/features_openl3")
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
-    positives = dataset.load_positives("./dataset_micro/positives.json")
+    positives = dataset.load_positives("./dataset_final_intersect/positives_lfm.json")
 
-    train, test = dataset.load_positives_split("./dataset_micro/positives.json")
-    print(train.shape)
-    print(test.shape)
+    print(positives.shape[0])
+
+    # train, test = dataset.load_positives_split("./dataset_small/positives_lfm.json")
+    # print(train.shape)
+    # print(test.shape)
+
+    # ids = torch.arange(0, len(track_ids)).numpy()
+    # raw, (levels, counts) = get_positives_deg_dist(ids, g, positives, repeats=True)
+    # df = pd.DataFrame((levels, counts))
+    # df.to_csv("pos_deg_repeats.csv")
+    # raw, (levels, counts) = get_positives_deg_dist(ids, g, positives, repeats=False)
+    # df = pd.DataFrame((levels, counts))
+    # df.to_csv("pos_deg.csv")
+    # raw, (levels, counts) = get_graph_deg_dist(ids, g, positives)
+    # df = pd.DataFrame((levels, counts))
+    # df.to_csv("graph_deg.csv")
+    # raw, (levels, counts) = get_positives_cooccurence_dist(ids, g, positives)
+    # df = pd.DataFrame((levels, counts))
+    # df.to_csv("pos_co.csv")
+    # raw, (levels, counts) = get_graph_cooccurence_dist(ids, g, positives)
+    # df = pd.DataFrame((levels, counts))
+    # df.to_csv("graph_co.csv")
+
+    print("Basic dataset stats:")
+
+    ids = np.arange(0, len(track_ids))
+
+    print("\nNodes in graph: ", len(g))
+    print("Songs in graph: ", len(ids))
+    print("Playlists in graph: ", len(g) - len(ids))
+    song_degrees = g.in_degrees(ids)
+    print(type(song_degrees))
+    print("Mean song degree: ", torch.mean(song_degrees.float()).item())
+    print("Median song degree: ", torch.median(song_degrees).item())
+
+    print("\n Positives: ", positives.shape[0])
+    print("Unique songs in positives: ", len(torch.unique(positives)))
+    co_counts, _ = get_graph_cooccurence_dist(ids, g, positives)
+    print("Mean co-occurence count: ", np.mean(co_counts))
+    print("Median co-occurence count: ", np.median(co_counts))
+
+    intersect = get_graph_positives_intersect(ids, g, positives)
+    print("Unique songs present in graph AND positives: ", len(intersect))

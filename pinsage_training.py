@@ -88,11 +88,11 @@ def sample_hard_negatives(all_ids, pos_batch, nbhds, min_rank, max_rank):
     nodeset = batch.flatten().unique().to(torch.int64)
     return batch, nodeset
 
-def sample_batch(all_ids, positives, batch_size, nbhds, hard_negatives=True):
+def sample_batch(all_ids, positives, batch_size, nbhds, hard_negatives=True, hn_min=10, hn_max=100):
     # sample batch with repetition and with random negative per positive pair
     pos_batch = sample_positives_with_rep(positives, batch_size)
     if hard_negatives:
-        batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, 10, 100)
+        batch, nodeset = sample_hard_negatives(all_ids, pos_batch, nbhds, hn_min, hn_max)
     else:
         batch, nodeset = sample_easy_negatives(all_ids, pos_batch)
     return batch, nodeset
@@ -132,7 +132,7 @@ class PinSage():
     def __init__(self, g, n_items, features, positives, log=True, load_save=True):
         
         # "dataset_features_params"
-        self.run_name = "gs_test"
+        self.run_name = "pinsage_randomft_intersect"
         # BODGE BODGE BODGE
         self.precomp_path = g.nbhds_path
 
@@ -150,7 +150,9 @@ class PinSage():
         self.n_hops = 500
         self.alpha = 0.85
         self.T = 3
-        self.hard_negatives = True
+        self.hard_negatives = False
+        self.hn_min = 10
+        self.hn_max = 100
 
         self.nbhds = psm.precompute_neighborhoods_topt(self.g, self.n,
                                     self.n_hops, self.alpha, psm.DEF_T_PRECOMP, self.precomp_path)
@@ -158,12 +160,12 @@ class PinSage():
         self.model = psm.PinSageModel(self.g, self.n, self.n_layers, self.dimensions,
                                     self.n_hops, self.alpha, self.T, self.nbhds)
         
-        self.lr = 1e-3
-        self.decay = 0.8
+        self.lr = 1e-4
+        self.decay = 0.95
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.decay)
         self.margin = 1e-5 # no clue what this should be
-        self.epochs = 3
+        self.epochs = 30
         self.batch_size = 128
         self.b_per_e = 500 # batches per epoch - for now with sampling w repetition
 
@@ -245,7 +247,8 @@ class PinSage():
             while self.b < self.b_per_e:
 
                 batch, nodeset = sample_batch(self.all_ids, self.positives, 
-                                    self.batch_size, self.nbhds, hard_negatives=self.hard_negatives)
+                                    self.batch_size, self.nbhds, hard_negatives=self.hard_negatives,
+                                    hn_min=self.hn_min, hn_max=self.hn_max)
                 loss, node_feat_loss, variance = self.train_batch(batch)
 
                 #print(f"Batch {self.b+1}/{self.b_per_e} done. Loss = {loss}")
@@ -269,11 +272,21 @@ class PinSage():
             self.e += 1
             self.scheduler.step()
 
-    def embed(self, ids=None):
+    def embed(self, ids=None, bsize=None):
         if ids is None:
             ids = self.all_ids
         self.model.eval()
-        self.embeddings = self.model(self.features, ids)
+        n = len(ids)
+
+        if not bsize:
+            self.embeddings = self.model(self.features, ids)
+
+        else:
+            self.embeddings = torch.zeros((n, self.out_dim))
+            for i in range(0, n, bsize):
+                ids = torch.arange(i, min(i+bsize, n))
+                self.embeddings[ids, :] = self.model(self.features, ids)
+
         return self.embeddings
 
     def load_model(self):
@@ -502,7 +515,7 @@ def knn_example(emb, n_examples, k, dataset, track_ids):
         print()
 
 
-def inspect_dataset(data_dir = "./dataset_small", f_dir="features_openl3", pos_dir="positives_lfm_large.json"):
+def inspect_dataset(data_dir = "./dataset_small", f_dir="features_openl3", pos_dir="positives_lfm.json"):
     # TODO: check that index ids align with spotify ids everywhere
     # TODO: check that training triples are correct
 
@@ -594,17 +607,17 @@ def train_and_save(dataset, track_ids, trainer):
 
 if __name__ == "__main__":
 
-    #inspect_dataset(data_dir="./dataset_small", f_dir="features_openl3")
+    #inspect_dataset(data_dir="./dataset_final_intersect", f_dir="features_musicnn")
 
-    dataset = SpotifyGraph("./dataset_small", "./dataset_small/features_openl3")
+    dataset = SpotifyGraph("./dataset_final_intersect", "./dataset_final_intersect/features_random")
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
     # gridsearch_recovery(dataset)
-    positives = dataset.load_positives("./dataset_small/positives_lfm.json")
+    train_pos, test_pos = dataset.load_positives_split("./dataset_final_intersect/positives_lfm.json")
 
-    trainer = PinSage(g, len(track_ids), features, positives, log=False, load_save=True)
+    trainer = PinSage(g, len(track_ids), features, train_pos, log=False, load_save=True)
 
     train_and_save(dataset, track_ids, trainer)
-    #save_embeddings(trainer, dataset, override_run_name="small_openl3_lfm_copy5")
+    #save_embeddings(trainer, dataset)
 
     # loss_test()
 

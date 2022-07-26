@@ -47,7 +47,7 @@ def generate_positives_simple_walks(dataset, m, T):
 def generate_positives(dataset_dir, n="auto", T=3):
 
     dataset = SpotifyGraph(dataset_dir, None)
-    n = len(dataset.tracks)*2 if n == "auto" else n
+    n = len(dataset.tracks)*5 if n == "auto" else n
     print(n)
     positives = generate_positives_simple_walks(dataset, n, T)
 
@@ -76,4 +76,5 @@ def generate_random_positives(dataset_dir, n="auto"):
 
 if __name__ == "__main__":
     
-    generate_random_positives("dataset_small")
+    generate_positives("dataset_final_intersect")
+    generate_random_positives("dataset_final_intersect")

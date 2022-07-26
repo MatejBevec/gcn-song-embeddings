@@ -37,9 +37,9 @@ def get_lfm_triplets(lfm_path):
 
     for i, chunk in enumerate(reader):
         print(i)
-        if i == 9000:
-            break
-        if random.random() < 0.01:
+        if i <= 5000:
+            continue
+        if random.random() < 0.02:
             #sample = chunk.sample(frac=0.01)
             le_df = pd.concat([le_df, chunk])
         
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
     #data_dir = sys.argv[1]
     data_dir = "dataset_small"
-    n = 500000
+    n = 10000000
 
     print(f"\033[0;33mGenerating positive training pairs for {data_dir}\
         from LFM listening events...\033[0m")
@@ -173,6 +173,9 @@ if __name__ == "__main__":
     for i in range(10):
         print(positives[i])
 
-    save_path = os.path.join(data_dir, "positives_lfm_test.json")
+    save_path = os.path.join(data_dir, "positives_lfm_huge.json")
+    with open(save_path, "r", encoding="utf-8") as f:
+        old_pos = json.load(f)
+    positives.extend(old_pos)
     with open(save_path, "w", encoding="utf-8") as f:
         json.dump(positives, f, ensure_ascii=False, indent=2)    

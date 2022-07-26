@@ -27,6 +27,7 @@ from tqdm import tqdm
 from lib.gnns.GNNs_unsupervised import GNN
 
 from spotify_graph import SpotifyGraph
+from pinsage_training import PinSage, save_embeddings
 
 
 
@@ -148,14 +149,16 @@ class PersPageRank(PredictionModel):
 
 class SimpleSimilarity(PredictionModel):
 
-    def __init__(self):
+    def __init__(self, projected=True):
         self.func = None #a networkx similarity function
+        self.projected = projected
 
     def train(self, g, ids, train_set, test_set, features):
-        #g_hom = dgl.to_homogeneous(g)
-        #self.g = dgl.to_networkx(g_hom).to_undirected()
-        # bodge
-        adj = g.adj(scipy_fmt="csr")
+        all_nodes = np.arange(0, len(ids))
+        if self.projected:
+            adj = project_bipartite_graph(all_nodes, dgl_g=g)
+        else:
+            adj = g.adj(scipy_fmt="csr")
         self.g = nx.from_scipy_sparse_matrix(adj)
         self.n = len(ids)
 
@@ -169,16 +172,53 @@ class SimpleSimilarity(PredictionModel):
         return torch.stack(knn_list, dim=0).topk(k, dim=1)
 
 class JaccardIndex(SimpleSimilarity):
-    def __init__(self):
+    def __init__(self, projected=True):
         self.func = nx.preferential_attachment
+        self.projected = projected
 
 class AdamicAdar(SimpleSimilarity):
-    def __init__(self):
+    def __init__(self, projected=True):
         self.func = nx.adamic_adar_index
+        self.projected = projected
 
 class Preferential(SimpleSimilarity):
-    def __init__(self):
+    def __init__(self, projected=True):
         self.func = nx.preferential_attachment
+        self.projected = projected
+
+
+class JaccardFast(PredictionModel):
+
+    def __init__(self):
+        pass
+
+    def train(self, g, ids, train_set, test_set, features):
+        self.ids = ids
+        self.n = len(ids)
+
+        print(len(ids))
+
+        ctmat = to_col_track_matrix(g, ids)
+
+        print(ctmat.shape)
+
+
+        self.intersect_sizes = ctmat.transpose() * ctmat
+        self.nbh_sizes = self.intersect_sizes.diagonal()
+        n = ctmat.shape[0]
+
+
+    def knn(self, nodeset, k):
+        intersect_tensor = torch.from_numpy(self.intersect_sizes[nodeset, :].toarray())
+        nbh_tensor = torch.from_numpy(self.nbh_sizes)
+        nbh_nodeset_tensor = nbh_tensor[nodeset]
+        a = nbh_nodeset_tensor.repeat((nbh_tensor.shape[0], 1)).transpose(1,0)
+        b = nbh_tensor.unsqueeze(0).transpose(1, 0).repeat((1, nbh_nodeset_tensor.shape[0])).transpose(1,0)
+        union_tensor = a + b - intersect_tensor
+        scores = intersect_tensor / (union_tensor + 1e-10)
+
+        topk_scores, topk_nodes = torch.topk(scores, k)
+        return topk_scores[:, 1:], topk_nodes[:, 1:]
 
 
 # class Node2Vec(EmbeddingModel):
@@ -266,6 +306,21 @@ class Snore(EmbeddingModel):
         return knn_from_emb(self.embedding, nodeset, k, self.sim_func)
 
 
+def _load_embeddings(ids, load_dir):
+    emb_list = []
+    pbar = tqdm(total=len(ids), desc="Loading embeddings")
+    bsize = 1000
+    for i, track_id in enumerate(ids):
+        if i % bsize == 0:
+            pbar.update(bsize)
+            #print(f"{i}/{len(ids)}")
+        load_path = os.path.join(load_dir, track_id + ".pt")
+        emb_list.append(torch.load(load_path))
+
+    embedding = torch.stack(emb_list, dim=0)
+    pbar.close()
+    return embedding
+
 # TEMP - LOAD COMPUTED EMBEDDING
 class EmbLoader(EmbeddingModel):
 
@@ -277,19 +332,72 @@ class EmbLoader(EmbeddingModel):
 
     def train(self, g, ids, train_set, test_set, features):
         print(f"Loading embeddings from {self.load_dir} ...")
-        emb_list = []
+        
+        # emb_list = []
+        # pbar = tqdm(total=len(ids), desc="Loading embeddings")
+        # bsize = 1000
+        # for i, track_id in enumerate(ids):
+        #     if i % bsize == 0:
+        #         pbar.update(bsize)
+        #         #print(f"{i}/{len(ids)}")
+        #     load_path = os.path.join(self.load_dir, track_id + ".pt")
+        #     emb_list.append(torch.load(load_path))
 
-        pbar = tqdm(total=len(ids), desc="Loading embeddings")
-        bsize = 1000
-        for i, track_id in enumerate(ids):
-            if i % bsize == 0:
-                pbar.update(bsize)
-                #print(f"{i}/{len(ids)}")
-            load_path = os.path.join(self.load_dir, track_id + ".pt")
-            emb_list.append(torch.load(load_path))
+        # self.embedding = torch.stack(emb_list, dim=0)
+        # pbar.close()
 
-        self.embedding = torch.stack(emb_list, dim=0)
-        pbar.close()
+        self.embedding = _load_embeddings(ids, self.load_dir)
+
+    def embed(self, nodeset):
+        return self.embedding[nodeset, :]
+
+    def knn(self, nodeset, k):
+        return knn_from_emb(self.embedding, nodeset, k, self.sim_func)
+
+
+class PinSageWrapper(EmbeddingModel):
+
+    def __init__(self, train_params=None, run_name=None, log=True):
+        self.embedding = None
+        self.sim_func = nn.CosineSimilarity(dim=1)
+        self.train_params = train_params if train_params else {}
+        self.run_name = run_name if run_name else time.strftime("%X %x")
+        self.log = log
+
+    def train(self, g, ids, train_set, test_set, features):
+        print("Training PinSage with parameters:")
+        print(self.train_params)
+
+        self.trainer = PinSage(g, len(ids), features, train_set, log=self.log, load_save=False)
+        # Set hyperparameters: BAD PRACTICE BUT ITS GONNA WORK
+        for param in self.train_params:
+            exec(f"self.trainer.{param} = {self.train_params[param]}")
+        self.trainer.run_name = self.run_name
+        self.trainer.train()
+        print("Embedding...")
+
+        #self.embedding = self.trainer.embed(bsize=128)
+
+        # HACK: save embeddings
+        track_ids = ids
+        n = len(track_ids)
+        bsize = 256
+        emb_dir = os.path.join("temp_runs", self.run_name, "emb")
+        if not os.path.isdir(emb_dir):
+            os.makedirs(emb_dir)
+        for i in range(0, n, bsize):
+            iids = torch.arange(i, min(i+bsize, n))
+            emb = self.trainer.embed(iids)
+            for id in iids:
+                str_id = track_ids[id]
+                save_path = os.path.join(emb_dir, str_id + ".pt")
+                if os.path.isfile(save_path):
+                    continue
+                torch.save(emb[id-i, :].clone().detach(), save_path)
+
+        self.embedding = _load_embeddings(ids, emb_dir)
+
+        
 
     def embed(self, nodeset):
         return self.embedding[nodeset, :]
@@ -310,9 +418,9 @@ class Random(PredictionModel):
         #nodes_list = torch.randint(0, self.n-1, size=(nodeset.shape[0], k))
         nodes_list = [torch.randperm(self.n)[0:k] for i in range(0, nodeset.shape[0])]
         nodes = torch.stack(nodes_list, dim=0)
-        print(nodes)
+        #print(nodes)
         weights = torch.ones_like(nodes)
-        print(weights)
+        #print(weights)
         return weights, nodes
 
 # CF METHODS
@@ -327,14 +435,11 @@ def to_col_track_matrix(g, ids):
         neighbors = list( set(g.successors(col)) | set(g.predecessors(col)) )
         neighbors = sorted(neighbors)
         mat[col-n_tracks, neighbors] = 1
-    print("matrix built")
     mat = mat.tocsr(copy=True)
     return mat
 
 def to_track_track_matrix(ids, positives):
     n = len(ids)
-    #mat = np.zeros((n, n))
-    print("building matrix")
     pos_tuples = [(positives[i, 0], positives[i, 1]) for i in range(positives.shape[0])]
     pos_tuples.sort(key=lambda x: x[1])
     mat = lil_matrix((n, n), dtype=np.int32)
@@ -342,8 +447,7 @@ def to_track_track_matrix(ids, positives):
         if mat[a, b]:
             mat[a, b] += 1
         else:
-            mat[a, b] = 1
-    print("matrix built")
+            mat[a, b] = 1    
     mat = mat.tocsr(copy=True)
     return mat
 
@@ -358,31 +462,6 @@ def to_ratings_df(mat):
     print("df built")
     return df
             
-# def to_surprise_trainset(df):
-#     reader = SpReader(rating_scale=(0, 5))
-#     data = SpDataset.load_from_df(df[["userID", "itemID", "rating"]], reader)
-#     trainset = data.build_full_trainset()
-#     print("trainset built")
-#     return trainset
-
-# def new_surprise_testset(ids, sample):
-#     n = len(ids)
-#     mat = np.zeros((n, n))
-#     mat[sample, :] = 1
-#     df = to_ratings_df(mat)
-#     trainset = to_surprise_trainset(df)
-#     return trainset.build_testset()
-
-# def surprise_pred_to_knn(predictions, sample, n_items, k):
-#     sample = sample.numpy()
-#     rating_mat = np.zeros((len(sample), n_items))
-#     global_to_batch_map = {sample[i]: i for i in range(len(sample))}
-#     for uid, iid, true_r, est, _ in predictions:
-#         rating_mat[global_to_batch_map[uid], iid] = est
-    
-#     topn_scores = np.flip(np.sort(rating_mat, axis=1), axis=1).copy()[:, :k]
-#     topn_nodes = np.flip(np.argsort(rating_mat, axis=1), axis=1).copy()[:, :k]
-#     return topn_scores, topn_nodes
 
 
 def project_bipartite_graph(bottom_nodes, dgl_g=None, nx_g=None, adj_mat=None):
@@ -401,29 +480,6 @@ def project_bipartite_graph(bottom_nodes, dgl_g=None, nx_g=None, adj_mat=None):
     proj_adj_mat = nx.to_scipy_sparse_matrix(proj_graph, nodelist=None, format="csr")
     
     return proj_adj_mat
-
-
-# class TrackTrackSVD(PredictionModel):
-
-#     def __init__(self):
-#         pass
-
-#     def train(self, g, ids, train_set, test_set, features):
-#         self.ids = ids
-#         self.n = len(ids)
-        
-#         ratings_df = to_ratings_df(to_track_track_matrix(ids, train_set))
-#         print(ratings_df.sort_values("rating", ascending=False))
-#         trainset = to_surprise_trainset(ratings_df)
-#         self.algo = SVD()
-#         self.algo.fit(trainset)
-
-#     def knn(self, nodeset, k):
-        
-#         testset = new_surprise_testset(self.ids, nodeset)
-#         predictions = self.algo.test(testset)
-#         topn_scores, topn_nodes = surprise_pred_to_knn(predictions, nodeset, len(self.ids), k)
-#         return torch.from_numpy(topn_scores), torch.from_numpy(topn_nodes)
 
 
 class TrackTrackCF(PredictionModel):
@@ -528,14 +584,18 @@ if __name__ == "__main__":
 
     dataset = SpotifyGraph("dataset_micro", None)
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
-    # pos = dataset.load_positives("dataset_small/positives_lfm_large.json")
+    #pos = dataset.load_positives("dataset_small/positives_lfm_large.json")
 
-    adj_mat = project_bipartite_graph(np.arange(0, len(track_ids)), dgl_g=g)
-    nx_g = nx.from_scipy_sparse_matrix(adj_mat)
+    jaccard = JaccardFast()
+    jaccard.train(g, track_ids, None, None, None)
+    print(jaccard.knn([1,4,5,6,7,8,12,333], 3))
 
-    edges = [(e[0], e[1], e[2]["weight"]) for e in nx_g.edges(data=True)]
-    for e in edges:
-        print(e)
+    # adj_mat = project_bipartite_graph(np.arange(0, len(track_ids)), dgl_g=g)
+    # nx_g = nx.from_scipy_sparse_matrix(adj_mat)
+
+    # edges = [(e[0], e[1], e[2]["weight"]) for e in nx_g.edges(data=True)]
+    # for e in edges:
+    #     print(e)
 
     # sample = torch.randperm(len(track_ids))[:100]
 
@@ -563,3 +623,29 @@ if __name__ == "__main__":
 
     # knn_w, knn_n = knn_from_emb_slow(emb, q, 3, nn.CosineSimilarity(dim=1))
     # print(knn_w, knn_n)    
+
+    # mat = [
+    #     [0, 0, 0],
+    #     [1, 1, 0],
+    #     [1, 0, 1],
+    #     [1, 1, 0]
+    # ]
+
+    # ctmat = sp.sparse.csr_matrix(np.array(mat))
+    # print(ctmat, "\n")
+
+    # intersect_sizes = ctmat * ctmat.transpose()
+    # print(intersect_sizes, "\n")
+    # nbh_sizes = sp.sparse.csr_matrix(intersect_sizes.diagonal())
+    # print(nbh_sizes, "\n")
+    # nbh_sizes_stack = sp.sparse.vstack([nbh_sizes for i in range(ctmat.shape[0])])
+    # print(nbh_sizes_stack, "\n")
+    # union_sizes = nbh_sizes_stack + nbh_sizes_stack.transpose() - intersect_sizes
+
+    # print(union_sizes, "\n")
+    
+    # intersect_tensor = torch.from_numpy(intersect_sizes.toarray())
+    # union_tensor = torch.from_numpy(union_sizes.toarray())
+    # scores = intersect_tensor / (union_tensor + 1e-8)
+
+    # print(scores)

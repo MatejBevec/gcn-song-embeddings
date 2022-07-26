@@ -24,7 +24,7 @@ CLIPS_SUBDIR = "clips"
 TEMP_CLIPS_SUBDIR = "temp_clips"
 CLIP_SUFFIX = ".mp3"
 EMB_PREFIX = "features_"
-BATCH_SIZE = 128
+BATCH_SIZE = 512
 SAMPLE_RATE = 16000
 N_SAMPLES = 480000
 DB_SCALE = True
@@ -128,7 +128,6 @@ def save_batch_emb(batch_ids, save_dir, embeddings):
     for i,id in enumerate(batch_ids):
         save_pth = os.path.join(save_dir, batch_ids[i] + ".pt")
         torch.save(embeddings[i,:].clone().detach(), save_pth)
-        print(save_pth, embeddings[i, :4])
 
 def keep_new_ids(batch_ids, emb_dir):
     if not os.path.isdir(emb_dir):
@@ -145,6 +144,7 @@ def generate_features(dataset_dir, models, online=False, load_clips=True, select
     with open(os.path.join(dataset_dir, "tracks.json"), "r", encoding="utf-8") as f:
         track_dict = json.load(f)
         all_ids = list(track_dict)
+
     if selection is not None:
         all_ids = list(np.array(list(track_dict))[selection])
     n = len(all_ids)
@@ -326,6 +326,9 @@ def generate_features_mfcc(dataset_dir):
         torch.save(emb, emb_pth)
 
 
+
+
+
 if __name__ == "__main__":
 
     batch_ids = [
@@ -343,18 +346,18 @@ if __name__ == "__main__":
     ])
 
     models = {
-        "openl3": OpenL3(),
+        #"openl3": OpenL3(),
         #"musicnn": MusicNN(),
         #"vggish": Vggish(),
-        #vggish2": Vggish2(),
-        #"vggish_msd": Vggish2(model="MSD_vgg"),
-        #"random": RandomFeatures(dim=512)
+        #"vggish2": Vggish2(),
+        #"vggish": Vggish2(model="MSD_vgg"),
+        "random": RandomFeatures(dim=512)
     }
 
-    with open("dataset_large/tracks.json", "r", encoding="utf-8") as f:
+    with open("dataset_final_intersect/tracks.json", "r", encoding="utf-8") as f:
         track_dict = json.load(f)
         n = len(list(track_dict))
-    generate_features("dataset_large", models, online=True, load_clips=True, selection=np.arange(600000, n))
+    generate_features("dataset_final_intersect", models, online=False, load_clips=False)
 
 
     #maybe take last layer -> get 10 vectors -> average neighboring 2 to get 5 -> concat into 1000 dim vector

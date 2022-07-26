@@ -7,7 +7,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
-from baselines import cosine_sim_ab
+from baselines import *
+
 
 
 def _gen_pl_random_seeds(qids, qemb, knn, m,  k, weighted):
@@ -74,6 +75,25 @@ class PlaylistModel(ABC):
     @abstractmethod
     def generate_playlist(self, query_playlist):
         pass
+
+
+PRECOMP_KNN = 100
+
+class EmbLoaderPlaylist(PlaylistModel):
+
+    def __init__(self, load_dir, seed_style="random", k=3):
+        self.model = EmbLoader(load_dir)
+        self.seed_style, self.k = seed_style, k
+
+    def train(self, g, track_ids, features, train_positivies, train_playlists):
+        self.model.train(self, None, track_ids, None, None, None)
+        self.knn = self.model.knn(torch.arange(0, len(track_ids)), PRECOMP_KNN)
+    
+    def generate_playlist(self, query_playlist):
+        query_emb = self.model.embed(query_playlist)
+        generate_playlist_from_emb(query_playlist, query_emb, self.knn,
+                                    seed_style=self.seed_style, k=self.k)
+
 
 
 if __name__ == "__main__":
