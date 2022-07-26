@@ -106,7 +106,7 @@ def get_lfm_spotify_map(lfm_triplets, sp_tracks_path, match="triplets"):
 
 
 
-def generate_lfm_positives(le_df, lfm_spotify_map, n):
+def _generate_lfm_positives(le_df, lfm_spotify_map, n):
 
     positives = []
     triplets = lfm_spotify_map.keys()
@@ -152,7 +152,20 @@ def generate_lfm_positives(le_df, lfm_spotify_map, n):
     return positives
 
 
+def generate_lfm_positives(data_dir, n):
 
+    triplets = get_lfm_triplets("./LFM")
+
+    lfm_spotify_map = get_lfm_spotify_map(triplets, os.path.join(data_dir, "tracks.json"), match="doubles")
+    print("mapped tracks: ", len(lfm_spotify_map.keys()))
+
+    positives = _generate_lfm_positives(triplets, lfm_spotify_map, n)
+    for i in range(10):
+        print(positives[i])
+
+    save_path = os.path.join(data_dir, "positives_lfm.json")
+    with open(save_path, "w", encoding="utf-8") as f:
+        json.dump(positives, f, ensure_ascii=False, indent=2)    
     
 
 if __name__ == "__main__":
@@ -164,18 +177,6 @@ if __name__ == "__main__":
     print(f"\033[0;33mGenerating positive training pairs for {data_dir}\
         from LFM listening events...\033[0m")
 
-    triplets = get_lfm_triplets("./LFM")
+    generate_lfm_positives(data_dir, n)
 
-    lfm_spotify_map = get_lfm_spotify_map(triplets, os.path.join(data_dir, "tracks.json"), match="doubles")
-    print("mapped tracks: ", len(lfm_spotify_map.keys()))
 
-    positives = generate_lfm_positives(triplets, lfm_spotify_map, n)
-    for i in range(10):
-        print(positives[i])
-
-    save_path = os.path.join(data_dir, "positives_lfm_huge.json")
-    with open(save_path, "r", encoding="utf-8") as f:
-        old_pos = json.load(f)
-    positives.extend(old_pos)
-    with open(save_path, "w", encoding="utf-8") as f:
-        json.dump(positives, f, ensure_ascii=False, indent=2)    

@@ -8,6 +8,7 @@ from pinsage_training import PinSage
 import pinsage_training as pt
 import generate_node_features as gnf
 import generate_positives as gp
+import generate_positives_lfm as gplfm
 from baselines import *
 import eval
 
@@ -24,23 +25,26 @@ def prepare_dataset():
     # generate node features
     # generate positives
 
-    DOWNLOAD_CLIPS = True
-    NODE_FEAT = {
-        "openl3": gnf.OpenL3(),
-        #"vggish": gnf.Vggish2(),
-        #"musicnn": gnf.MusicNN()
-    }
+    #DOWNLOAD_CLIPS = True
+    # NODE_FEAT = {
+    #     "openl3": gnf.OpenL3(),
+    #     "vggish": gnf.Vggish2(model="MSD_vgg"),
+    #     "musicnn": gnf.MusicNN()
+    # }
+    #if DOWNLOAD_CLIPS:
+    #    dc.download_clips()
+    #gnf.generate_features(DATA_DIR, NODE_FEAT, online = not DOWNLOAD_CLIPS)
 
     dc = DatasetCollector(DATA_DIR, 0)
     dc.download_images()
-    if DOWNLOAD_CLIPS:
-        dc.download_clips()
 
-    gnf.generate_features(DATA_DIR, NODE_FEAT, online = not DOWNLOAD_CLIPS)
-
-    dataset = SpotifyGraph(DATA_DIR, FEATURES_DIR)
+    dataset_openl3 = SpotifyGraph(DATA_DIR, None)
+    dataset_vggish = SpotifyGraph(DATA_DIR, "./dataset_final_intersect/features_vggish")
+    dataset_musicnn = SpotifyGraph(DATA_DIR, "./dataset_final_intersect/features_musicnn")
     
-    gp.generate_positives(dataset)
+    #gp.generate_positives(dataset, 200000)
+    #gplfm.generate_lfm_positives(dataset, 5000000)
+
     
 
 def train_pinsage():
@@ -50,11 +54,32 @@ def train_pinsage():
     # train pinsage
     # save embeddings
 
+    
+    dataset_vggish = SpotifyGraph(DATA_DIR, "./dataset_final_intersect/features_vggish")
+    dataset_musicnn = SpotifyGraph(DATA_DIR, "./dataset_final_intersect/features_musicnn")
+
+    # Train on 3 models on 3 different node features
+    features = {
+        "vggish": "./dataset_final_intersect/features_vggish",
+        "musicnn": "./dataset_final_intersect/features_musicnn",
+        "random": "./dataset_final_intersect/features_random",
+    }
+
+    for ft in features:
+        dataset = SpotifyGraph(DATA_DIR, features[ft])
+        g, track_ids, col_ids, features = dataset.to_dgl_graph()
+        positives = dataset.load_positives(os.path.join(DATA_DIR, "positives_lfm.json"))
+        pinsage = PinSage(g, len(track_ids), features, positives)
+        setattr(pinsage, "run_name", f"pinsage_{ft}_ft")
+        pinsage.train() # SEE HYPERPARAMETERS IN pinsage_training.py
+        pt.save_embeddings(pinsage, dataset)
+
+    # Train model on alternative (PPR) positives
     dataset = SpotifyGraph(DATA_DIR, FEATURES_DIR)
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
-    positives = dataset.load_positives(os.path.join(DATA_DIR, "positives.json"))
-
+    positives = dataset.load_positives(os.path.join(DATA_DIR, "positives.json")) #positives.json = PPR positives
     pinsage = PinSage(g, len(track_ids), features, positives)
+    setattr(pinsage, "run_name", f"pinsage_pagerank_pos")
     pinsage.train() # SEE HYPERPARAMETERS IN pinsage_training.py
     pt.save_embeddings(pinsage, dataset)
 
@@ -72,6 +97,7 @@ def eval_baselines():
     train_pos, test_pos = dataset.load_positives_split(os.path.join(DATA_DIR, "positives_lfm.json"))
     n_items = torch.arange(0, len(track_ids))
 
+    # baselines to train and eval on 'g', 'feature' and 'positives'
     baselines = {
         
         "Random": Random(),
@@ -84,17 +110,17 @@ def eval_baselines():
         "OpenL3": EmbLoader("dataset_final_intersect/features_openl3"),
         "VGGish": EmbLoader("dataset_final_intersect/features_vggish"),
         "MusicNN": EmbLoader("dataset_final_intersect/features_musicnn"),
-
+        
         "PinSageBase": PinSageWrapper(
             train_params={"T": 3, "lr": 0.0001, "epochs": 30, "n_layers": 2, "hard_negatives": False,
                             "decay": 0.95, "margin": 1e-05, "out_dim": 128},
             run_name="pinsage_base"
         ),
 
-        "PinsageRandom": EmbLoader("runs/pinsage_randomft_intersect/emb"),
-        "PinsagePageRank": EmbLoader("runs/pinsage_pagerank_intersect/emb"),
-        "PinsageMusicNN": EmbLoader("runs/pinsage_musicnn_intersect/emb"),
-        "PinsageVggish": EmbLoader("runs/pinsage_vggish_intersect/emb"),
+        "PinsageRandom": EmbLoader("runs/pinsage_random_ft/emb"),
+        "PinsagePageRank": EmbLoader("runs/pinsage_pagerank_pos/emb"),
+        "PinsageMusicNN": EmbLoader("runs/pinsage_musicnn_ft/emb"),
+        "PinsageVggish": EmbLoader("runs/pinsage_vggish_ft/emb"),
 
         "PinSageHardNeg": PinSageWrapper(
             train_params={"T": 3, "lr": 0.0001, "epochs": 30, "n_layers": 2, "hard_negatives": True,
@@ -128,27 +154,7 @@ def eval_baselines():
         #"JaccardIndex": JaccardIndex(),
         #"AdamicAdar": AdamicAdar(),
         #"UnsupervisedGraphSAGE": GraphSAGE()
-        
 
-        # THE MODELS BELOW NEED ANOTHER TRAINING ON TRAIN/TEST SPLIT
-
-        ###"PinSageRandomLFMlarge": EmbLoader("runs/small_random_lfm_large/emb"),  
-        ###"PinSageOpenL3LFM": EmbLoader("runs/small_openl3_lfm_test/emb"), #lfm_mini
-        ###"PinSageOpenL3": EmbLoader("runs/small_openl3_pr3/emb"),
-        #"PinSageOpenL3t10": EmbLoader("runs/small_openl3_T10/emb"),
-        #"PinSageOpenL3LFMfull": EmbLoader("runs/small_openl3_lfm/emb"),
-        #"PinSageOpenL3LFMlarge": EmbLoader("runs/small_openl3_lfm_large/emb"),
-        # "PinSageOpenl3Mixed": EmbLoader("runs/small_openl3_mixed/emb"),
-        ##"PinSageVggishLFMlarge": EmbLoader("runs/small_vggish_lfm_large/emb"),
-        ##"PinSageMusicNNLFMlarge": EmbLoader("runs/small_musicnn_lfm_large_2/emb"),
-        #"PinSageOpenL3longLFMlarge": EmbLoader("runs/small_openl3_lfm_large_2/emb"),
-        ##"PinSageT10OpenL3LFMlarge": EmbLoader("runs/small_openl3_lfm_large_3/emb"),
-        # "PinSageVggish": EmbLoader("runs/small_vggish/emb"),
-        # "PinSageMusicNN": EmbLoader("runs/small_musicnn/emb"),
-        ##"PinSageOpenL3LFMBest": EmbLoader("runs_gs1/gridsearch#0.1.1.0.1/emb"),
-        ####"PinSageOpenL3LFMBestBest": EmbLoader("runs_gs4/gridsearch#0.0.0.0.0.1.0.0/emb"),
-        ####"PinSagePageRank": EmbLoader("runs/pinsage_pagerank/emb"),
-        #"PinSageRandomFeatures": EmbLoader("runs/pinsage_random/emb")
     }
 
     
@@ -180,5 +186,10 @@ if __name__ == "__main__":
         train_pinsage()
 
     if action == "eval":
+        eval_baselines()
+
+    if action == "all":
+        prepare_dataset()
+        train_pinsage()
         eval_baselines()
 

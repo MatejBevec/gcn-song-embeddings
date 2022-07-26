@@ -17,28 +17,20 @@ DEF_T_PRECOMP = 100
 DEF_HOPS = 500
 DEF_ALPHA = 0.85
 
-# bipartide graph in dgl (2 options):
-# all nodes are same type, pass in number of item nodes (currently using)
-# heterogenous graph
 
 def get_embeddings(h, nodeset, d):
     return h[nodeset, :d]
 
 def put_embeddings(h, nodeset, nodeset_new_h):
-    #n_nodes = nodeset.shape[0] # nodeset is just the batch, new_h has all relevant nodes!
-    #n_features = h.shape[1]
-    #new_h = h.scatter(0, nodeset[:, None].expand(n_nodes, n_features), nodeset_new_h)
+    """Add (update) newly computed embeddings."""
     new_h = h.clone().detach()
     pad_cols = new_h.shape[1] - nodeset_new_h.shape[1]
     pad_rows = nodeset.shape[0]
     new_h[nodeset, :] = torch.cat([nodeset_new_h, torch.zeros(pad_rows, pad_cols)], 1)
-    # print(nodeset_new_h.shape)
-    # print(new_h.shape)
-    # print(nodeset_new_h[0,:])
-    # print()
     return new_h
 
 def do_random_walks(g, nodeset, n_hops, alpha):
+    """Sample random walks and return traces."""
 
     n_nodes = nodeset.shape[0]
     trace = torch.zeros(n_nodes, n_hops, dtype=torch.int64)
@@ -61,7 +53,8 @@ def do_random_walks(g, nodeset, n_hops, alpha):
     return trace
 
 def sample_neighborhood_topt_early_stop(g, n_items, nodeset, n_hops, alpha, T, np, nv):
-    # terminate when at least "np" pins have been visited "nv" or more times
+    """(NOT USED) Sample neighborhoods with early stopping.
+    Terminate walks when at least "np" pins have been visited "nv" or more times"""
 
     n_nodes = nodeset.shape[0]
     visit_counts = torch.zeros((n_nodes, n_items), dtype=torch.int64)
@@ -93,6 +86,8 @@ def sample_neighborhood_topt_early_stop(g, n_items, nodeset, n_hops, alpha, T, n
     return visit_prob.topk(T, 1)
 
 def sample_neighborhood(g, n_items, nodeset, n_hops, alpha):
+    """Return the PPR neighbor scores for nodes in nodeset.
+        I.e. return normalized visit counts."""
 
     n_nodes = nodeset.shape[0]
     n_all_nodes = g.number_of_nodes()
@@ -106,12 +101,14 @@ def sample_neighborhood(g, n_items, nodeset, n_hops, alpha):
     return visit_prob
 
 def sample_neighborhood_topt(g, n_items, nodeset, n_hops, alpha, T):
-    # called "N(u)" in paper
+    """Return the T-sized PPR neighborhoods of nodes in nodeset. Called N(u) in paper."""
 
     visit_prob = sample_neighborhood(g, n_items, nodeset, n_hops, alpha)
     return visit_prob.topk(T, 1)
 
 def precompute_neighborhoods_topt(g, n_items, n_hops, alpha, T, path):
+    """Return the T-sized PPR neighborhoods of ALL nodes.
+    Load if already computed, else compute now."""
 
     if os.path.isfile(path): 
         nodes, weights = torch.load(path)
@@ -136,13 +133,14 @@ def precompute_neighborhoods_topt(g, n_items, n_hops, alpha, T, path):
 
 
 def sample_hard_negatives(g, n_items, visit_prob, hn_per_query, min_rank, max_rank):
+    """(NOT USED)"""
 
     range = visit_prob.topk(max_rank, 1)[1][:, min_rank:]
     sample = torch.randint(0, range.shape[1], (hn_per_query,))
     return range[:, sample]
 
 def relevant_nodes_per_layer(g, n_items, nodeset, n_layers, n_hops, alpha, T):
-    # called "S" in paper
+    """Return the T-hop computation graph around nodeset nodes."""
 
     S = []
     cur_nodeset = nodeset
@@ -156,6 +154,8 @@ def relevant_nodes_per_layer(g, n_items, nodeset, n_layers, n_hops, alpha, T):
     return S
 
 def relevant_nodes_per_layer_precomp(nodeset, n_layers, T , nbhds):
+    """Return the T-hop computation graph around nodeset nodes.
+    Load if already computed, else compute now."""
 
     all_nb_weights, all_nb_nodes = nbhds
     S = []
@@ -169,6 +169,7 @@ def relevant_nodes_per_layer_precomp(nodeset, n_layers, T , nbhds):
     
 
 class ConvLayer(nn.Module):
+    """A single PinSage convolution."""
     
     def __init__(self, in_dim, out_dim, hidden_dim):
         super(ConvLayer, self).__init__()
@@ -212,6 +213,7 @@ class ConvLayer(nn.Module):
 
 
 class PinSageModel(nn.Module):
+    """A PinSage model. A call to forward() constitutes a PinSage feed-forward step."""
 
     def __init__(self, g, n_items, n_layers, dimensions, n_hops, alpha, T, nbhds):
         super(PinSageModel, self).__init__()
@@ -249,9 +251,6 @@ class PinSageModel(nn.Module):
         relevant_nodes = relevant_nodes_per_layer_precomp(nodeset, self.n_layers, self.T, self.nbhds)
         h = initial_h
         t2 = time.time()
-        #print("t:", t2-t1)
-
-        # print(h[nodeset,:][0,:64])
 
         for i, (nodeset, nb_weights, nb_nodes) in enumerate(relevant_nodes):
             nodeset_new_h = self.conv_layers[i](h, nodeset, nb_nodes, nb_weights)
@@ -270,18 +269,12 @@ class PinSageModel(nn.Module):
 
 if __name__ == "__main__":
 
-    print("hell")
-
     dataset = SpotifyGraph("./dataset_micro", "./dataset_micro/features_openl3")
     g, track_ids, col_ids, features = dataset.to_dgl_graph()
 
     batch_size = 128
     sample = torch.randint(0, len(track_ids), (batch_size,))
     nodeset = sample # dgl ids are just indices!, nodeset = batch of nodes
-
-    # visit_prob = sample_neighborhood(g, nodeset, 1000, 0.85)
-    # range = sample_hard_negatives(g, visit_prob, 6, 50, 100)
-    # print(range) # .values .indices
 
     initial_h = features
     #print(initial_h[0:5, 0:5])

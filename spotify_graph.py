@@ -10,6 +10,8 @@ from tqdm import tqdm
 from scipy.sparse import csr_matrix, lil_matrix
 import matplotlib.pyplot as plt
 
+
+
 class SpotifyGraph():
 
     def __init__(self, dir, features_dir):
@@ -124,6 +126,8 @@ class SpotifyGraph():
 
 
 
+
+
 def _to_track_track_matrix(ids, positives):
     n = len(ids)
     pos_tuples = [(positives[i, 0], positives[i, 1]) for i in range(positives.shape[0])]
@@ -167,40 +171,9 @@ def get_graph_positives_intersect(track_ids, g, positives):
     intersect = set(ids_in_positives.tolist()) & set(track_ids)
     return np.array(list(intersect))
 
-
-
-
-if __name__ == "__main__":
-
-    dataset = SpotifyGraph("./dataset_final_intersect", None)#, "./dataset_final_intersect/features_openl3")
-    g, track_ids, col_ids, features = dataset.to_dgl_graph()
-    positives = dataset.load_positives("./dataset_final_intersect/positives_lfm.json")
-
-    print(positives.shape[0])
-
-    # train, test = dataset.load_positives_split("./dataset_small/positives_lfm.json")
-    # print(train.shape)
-    # print(test.shape)
-
-    # ids = torch.arange(0, len(track_ids)).numpy()
-    # raw, (levels, counts) = get_positives_deg_dist(ids, g, positives, repeats=True)
-    # df = pd.DataFrame((levels, counts))
-    # df.to_csv("pos_deg_repeats.csv")
-    # raw, (levels, counts) = get_positives_deg_dist(ids, g, positives, repeats=False)
-    # df = pd.DataFrame((levels, counts))
-    # df.to_csv("pos_deg.csv")
-    # raw, (levels, counts) = get_graph_deg_dist(ids, g, positives)
-    # df = pd.DataFrame((levels, counts))
-    # df.to_csv("graph_deg.csv")
-    # raw, (levels, counts) = get_positives_cooccurence_dist(ids, g, positives)
-    # df = pd.DataFrame((levels, counts))
-    # df.to_csv("pos_co.csv")
-    # raw, (levels, counts) = get_graph_cooccurence_dist(ids, g, positives)
-    # df = pd.DataFrame((levels, counts))
-    # df.to_csv("graph_co.csv")
+def print_dataset_stats(g, track_ids, positives):
 
     print("Basic dataset stats:")
-
     ids = np.arange(0, len(track_ids))
 
     print("\nNodes in graph: ", len(g))
@@ -219,3 +192,40 @@ if __name__ == "__main__":
 
     intersect = get_graph_positives_intersect(ids, g, positives)
     print("Unique songs present in graph AND positives: ", len(intersect))
+
+
+def save_dataset_distributions(g, track_ids, positives):
+
+    ids = torch.arange(0, len(track_ids)).numpy()
+    raw, (levels, counts) = get_positives_deg_dist(ids, g, positives, repeats=True)
+    df = pd.DataFrame((levels, counts))
+    df.to_csv("pos_deg_repeats.csv")
+    raw, (levels, counts) = get_positives_deg_dist(ids, g, positives, repeats=False)
+    df = pd.DataFrame((levels, counts))
+    df.to_csv("pos_deg.csv")
+    raw, (levels, counts) = get_graph_deg_dist(ids, g, positives)
+    df = pd.DataFrame((levels, counts))
+    df.to_csv("graph_deg.csv")
+    raw, (levels, counts) = get_positives_cooccurence_dist(ids, g, positives)
+    df = pd.DataFrame((levels, counts))
+    df.to_csv("pos_co.csv")
+    raw, (levels, counts) = get_graph_cooccurence_dist(ids, g, positives)
+    df = pd.DataFrame((levels, counts))
+    df.to_csv("graph_co.csv")
+
+
+
+
+if __name__ == "__main__":
+
+    dataset = SpotifyGraph("./dataset_final_intersect", "./dataset_final_intersect/features_openl3")
+    g, track_ids, col_ids, features = dataset.to_dgl_graph()
+    positives = dataset.load_positives("./dataset_final_intersect/positives_lfm.json")
+
+    train, test = dataset.load_positives_split("./dataset_small/positives_lfm.json")
+
+    print_dataset_stats(g, track_ids, positives)
+    save_dataset_distributions(g, track_ids, positives)
+
+
+
