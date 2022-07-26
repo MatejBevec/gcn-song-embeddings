@@ -196,16 +196,11 @@ class JaccardFast(PredictionModel):
         self.ids = ids
         self.n = len(ids)
 
-        print(len(ids))
-
         ctmat = to_col_track_matrix(g, ids)
-
-        print(ctmat.shape)
-
 
         self.intersect_sizes = ctmat.transpose() * ctmat
         self.nbh_sizes = self.intersect_sizes.diagonal()
-        n = ctmat.shape[0]
+        n = ctmat.shape[1]
 
 
     def knn(self, nodeset, k):

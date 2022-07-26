@@ -221,47 +221,6 @@ class LazyKnnDict():
 # OFFLINE EVAL
 # -----------------------------------------------------
 
-# def cosine_sim(a, b):
-#     # in: pair of batch_size * d batches of vectors
-#     # out: batch_size * 1 dot products of pairs of vectors 
-#     batch_size = a.shape[0]
-#     d = a.shape[1]
-#     q_dot_pos = torch.bmm(a.view(batch_size, 1, d), b.view(batch_size, d, 1)).squeeze()
-#     return q_dot_pos
-
-# def cosine_sim_single(a, b):
-#     # in: pair of (d) vectors
-#     # out: their dot product
-#     return torch.sum(a*b).item()
-
-# def euclid_sim_single(a, b):
-#     return -torch.norm(a - b, p=None).item()
-
-# def similarity_matrix(emb, sim_func):
-
-#     n = emb.shape[0]
-#     sim = torch.zeros((n,n))
-
-#     for i in range(n):
-#         for j in range(i, n):
-#             ij_sim = sim_func(emb[i, :], emb[j, :])
-#             sim[i,j], sim[j,i] = ij_sim, ij_sim
-    
-#     return sim
-
-# #query_i = torch.randint(0, emb.shape[0], (1,))
-# def knn_from_emb_euclid(emb, q, K):
-#     # in: (n * d) embedding matrix, (d) query vector 
-#     euclid_dist = torch.norm(emb - q, dim=1, p=None)
-#     knn_dist, knn_ids = euclid_dist.topk(K, largest=False)
-#     return knn_ids
-
-# def knn_from_sim(sim, q, K):
-#     # in: (n * n) similarity matrix, (d) query vector
-#     sim_to_q = sim[:, q]
-#     knn_sim, knn_ids = sim_to_q.topk(K, largest=True)
-#     return knn_ids
-
 
 # ACCURACY
 
