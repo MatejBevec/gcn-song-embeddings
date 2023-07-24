@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.modules.activation import Tanh
 import time
-from torch.utils.tensorboard import SummaryWriter
+#from torch.utils.tensorboard import SummaryWriter
 import torchvision
 from torchvision.io.image import ImageReadMode
 from torch.optim.lr_scheduler import _LRScheduler
@@ -163,7 +163,7 @@ class PinSage():
         if not os.path.isdir(board_dir):
             os.mkdir(board_dir)
 
-        self.writer = SummaryWriter(board_dir)
+        #self.writer = SummaryWriter(board_dir)
         self.e = 0
         self.b = 0
 
@@ -221,7 +221,7 @@ class PinSage():
         while self.e < self.epochs:
             print(f"Training epoch {self.e+1}/{self.epochs}...")
             cur_lr = self.optimizer.param_groups[0]["lr"]
-            self.writer.add_scalar("lr", cur_lr, self.e*self.b_per_e)
+            #self.writer.add_scalar("lr", cur_lr, self.e*self.b_per_e)
             t1 = time.time()
 
             pbar = tqdm(total=self.b_per_e)
@@ -237,7 +237,7 @@ class PinSage():
                 #print(f"Batch {self.b+1}/{self.b_per_e} done. Loss = {loss}")
                 pbar.update(1)
                 pbar.set_description(f"Loss = {loss}, bathes done")
-                self.writer.add_scalar("loss/train", loss, self.e*self.b_per_e + self.b + 1)
+                #self.writer.add_scalar("loss/train", loss, self.e*self.b_per_e + self.b + 1)
                 if self.log:
                     wandb.log({'Train Loss': loss,
                             'Node Features Loss': node_feat_loss,
@@ -360,9 +360,9 @@ def embeddings_to_board(emb, trainer, dataset):
             image = torch.rand((3,a,a))
         images.append(image)
 
-    writer = trainer.writer
-    writer.add_embedding(emb, metadata=titles, 
-        label_img=torch.stack(images, dim=0), tag=f"pinsage:{trainer.run_name}")
+    #writer = trainer.writer
+    #writer.add_embedding(emb, metadata=titles, 
+    #    label_img=torch.stack(images, dim=0), tag=f"pinsage:{trainer.run_name}")
 
 
 def song_titles(indices, dataset, ids):

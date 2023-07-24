@@ -8,16 +8,14 @@ import pandas as pd
 import numpy as np
 import dgl
 from six import b
-from tensorflow.python.training.tracking.base import Trackable
 import torch
 import torchaudio
 import torchaudio.transforms as T
 import librosa
-import openl3
-#import vggish_keras as vgk
+import torchopenl3 as openl3
 import urllib
-import musicnn
-import musicnn.extractor
+#import musicnn
+#import musicnn.extractor
 
 OVERRIDE = False
 CLIPS_SUBDIR = "clips"
@@ -220,67 +218,57 @@ class OpenL3():
     def embed(self, clips, paths):
         emb_list = []
         for clip, sr in clips:
-            clip = clip.transpose(1,0).numpy()
+            #clip = clip.transpose(1,0).numpy()
             hop_size = 2 # (sec) - aka embed 1s clip every 2s and take average - decrease later!!!
+            batch = clip.transpose(1,0)
             emb_batch, ts = openl3.get_audio_embedding(clip, sr, model=self.model, hop_size=hop_size)
-            emb = torch.mean(torch.from_numpy(emb_batch), dim=0, keepdim=False)
+            #emb = torch.mean(torch.from_numpy(emb_batch), dim=0, keepdim=False)
+            emb = torch.mean(emb_batch, dim=0, keepdim=False)
             emb_list.append(emb)
 
         return torch.stack(emb_list, dim=0)
 
-# class Vggish():
 
-#     def __init__(self):
-#         self.model = vgk.get_embedding_function(hop_duration=0.25)
+# class Vggish2():
+
+#     def __init__(self, model="MTT_vgg", layer="pool5"):
+#         self.model = model
+#         self.layer = layer
 
 #     def embed(self, clips, paths):
 #         emb_list = []
-#         for clip, sr in clips:
-#             Z, ts = self.model(clip, sr)
-#             emb_list.append(torch.tensor(Z))
-    
+#         for clip_path in paths:
+#             t = time.time()
+#             taggram, tags, features = musicnn.extractor.extractor(clip_path,
+#                                                     model=self.model,
+#                                                     input_length=3,
+#                                                     input_overlap=None,
+#                                                     extract_features=True)
+#             emb = features[self.layer]
+#             emb = torch.from_numpy(emb).mean(dim=0)
+#             emb_list.append(emb)
 #         return torch.stack(emb_list, dim=0)
 
-class Vggish2():
 
-    def __init__(self, model="MTT_vgg", layer="pool5"):
-        self.model = model
-        self.layer = layer
+# class MusicNN():
 
-    def embed(self, clips, paths):
-        emb_list = []
-        for clip_path in paths:
-            t = time.time()
-            taggram, tags, features = musicnn.extractor.extractor(clip_path,
-                                                    model=self.model,
-                                                    input_length=3,
-                                                    input_overlap=None,
-                                                    extract_features=True)
-            emb = features[self.layer]
-            emb = torch.from_numpy(emb).mean(dim=0)
-            emb_list.append(emb)
-        return torch.stack(emb_list, dim=0)
+#     def __init__(self):
+#         pass
 
-
-class MusicNN():
-
-    def __init__(self):
-        pass
-
-    def embed(self, clips, paths):
-        emb_list = []
-        for clip_path in paths:
-            t = time.time()
-            taggram, tags, features = musicnn.extractor.extractor(clip_path,
-                                                    model='MTT_musicnn',
-                                                    input_length=3,
-                                                    input_overlap=None,
-                                                    extract_features=True)
-            emb = features["max_pool"]
-            # "penultimate"
-            emb = torch.from_numpy(emb).mean(dim=0)
-            emb_list.append(emb)
-        return torch.stack(emb_list, dim=0)
+#     def embed(self, clips, paths):
+#         emb_list = []
+#         for clip_path in paths:
+#             t = time.time()
+#             taggram, tags, features = musicnn.extractor.extractor(clip_path,
+#                                                     model='MTT_musicnn',
+#                                                     input_length=3,
+#                                                     input_overlap=None,
+#                                                     extract_features=True)
+#             emb = features["max_pool"]
+#             # "penultimate"
+#             emb = torch.from_numpy(emb).mean(dim=0)
+#             emb_list.append(emb)
+#         return torch.stack(emb_list, dim=0)
 
 
 
@@ -331,20 +319,6 @@ def generate_features_mfcc(dataset_dir):
 
 if __name__ == "__main__":
 
-    batch_ids = [
-        "0dIoGTQXDh1wVnhIiSyYEa",
-        "0dRY4OrSY53yUjVgfgne1W",
-        "0DwVfCYLrVXgvejYbWwZAd",
-        "0EdgK7ASb4kfRkW8pVMN02"
-    ]
-
-    embeddings = torch.tensor([
-        [1,2,3],
-        [2,2,2],
-        [4,2,0],
-        [6,6,6]
-    ])
-
     models = {
         #"openl3": OpenL3(),
         #"musicnn": MusicNN(),
@@ -354,13 +328,9 @@ if __name__ == "__main__":
         "random": RandomFeatures(dim=512)
     }
 
-    with open("dataset_final_intersect/tracks.json", "r", encoding="utf-8") as f:
+    with open("dataset_micro/tracks.json", "r", encoding="utf-8") as f:
         track_dict = json.load(f)
         n = len(list(track_dict))
-    generate_features("dataset_final_intersect", models, online=False, load_clips=False)
+    generate_features("dataset_micro", models, online=False, load_clips=False)
 
-
-    #maybe take last layer -> get 10 vectors -> average neighboring 2 to get 5 -> concat into 1000 dim vector
-    #and compare against taking max_pool (753) and just averaging for all 10 sections -> you basically just capture harmonies
-    #but hopefully well
 

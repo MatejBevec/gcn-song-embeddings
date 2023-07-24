@@ -35,7 +35,7 @@ class SpotifyGraph():
         
         # todo: check if all nodes have features
         # todo: load batches into memory instead of whole dataset
-        self.ft_dir = features_dir
+        self.ft_dir = features_dir if os.path.isdir(features_dir) else None
         self.features_dict = {}
 
     def to_dgl_graph(self):

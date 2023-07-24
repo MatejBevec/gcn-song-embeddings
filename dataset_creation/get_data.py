@@ -41,7 +41,7 @@ MIN_OFFSET = 900
 MAX_OFFSET = 1000 # max offset when searching (small means only whats popular now)
 MARKET = None # none or 2 character string
 DECADES = [1950,1960,1970,1980,1990,2000,2010] # query on of these decades (albums)
-SMALL_IMG = False
+SMALL_IMG = True
 GENRE = False
 
 DIRECTED = False # undirected graph has additional backwards links from tracks to albums
@@ -428,8 +428,11 @@ class DatasetCollector():
 
         for tid in tracks:
             image_fn = os.path.join(self.images_dir, self.tracks[tid]["album_id"] + ".jpg")
-            new_image_fn = os.path.join(ti_dir, tid + ".jpg")
-            shutil.copy2(image_fn, new_image_fn)
+            if os.path.isfile(image_fn):
+                new_image_fn = os.path.join(ti_dir, tid + ".jpg")
+                shutil.copy2(image_fn, new_image_fn)
+            else:
+                print("Warning: an image is missing...")
 
     def start(self):
 

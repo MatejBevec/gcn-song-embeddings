@@ -1,6 +1,6 @@
 # Hybrid music recommendation with graph neural networks 
 
-An implementation of PinSage as a music recommender, evaluated against CF, graph-based methods and content-based methods.
+An implementation of PinSage as a music recommender, evaluated against CF, graph-based methods and content-based methods on a next-song-prediction task.
 
 ![PinSage Recommender System](figures/system_wide.png)
 

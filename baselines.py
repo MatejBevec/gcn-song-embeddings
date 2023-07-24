@@ -14,13 +14,13 @@ import torch.nn as nn
 import networkx as nx
 from networkx.algorithms import bipartite
 
-from snore import SNoRe
-from node2vec import Node2Vec as N2V
+#from snore import SNoRe
+#from node2vec import Node2Vec as N2V
 import fastnode2vec as fn2v
 from torch.nn.modules.distance import CosineSimilarity
-from surprise import Dataset as SpDataset
-from surprise import Reader as SpReader
-from surprise import NormalPredictor, SVD
+# from surprise import Dataset as SpDataset
+# from surprise import Reader as SpReader
+# from surprise import NormalPredictor, SVD
 import implicit
 from tqdm import tqdm
 
@@ -163,7 +163,7 @@ class SimpleSimilarity(PredictionModel):
             adj = project_bipartite_graph(all_nodes, dgl_g=g)
         else:
             adj = g.adj(scipy_fmt="csr")
-        self.g = nx.from_scipy_sparse_matrix(adj)
+        self.g = nx.from_scipy_sparse_array(adj)
         self.n = len(ids)
 
     def knn(self, nodeset, k):
@@ -230,12 +230,13 @@ class FastNode2Vec(EmbeddingModel):
         self.projected = projected
 
     def train(self, g, ids, train_set, test_set, features):
+        print("TRAINING NODE2VEC")
         all_nodes = np.arange(0, len(ids))
         if self.projected:
             adj = project_bipartite_graph(all_nodes, dgl_g=g)
         else:
             adj = g.adj(scipy_fmt="csr")
-        nx_g = nx.from_scipy_sparse_matrix(adj)
+        nx_g = nx.from_scipy_sparse_array(adj)
         edges = [(e[0], e[1], e[2]["weight"]) for e in nx_g.edges(data=True)]
         self.g = fn2v.Graph(edges, directed=False, weighted=self.projected)
         self.model = fn2v.Node2Vec(self.g, dim=128, walk_length=20, context=10, p=2.0, q=0.5, workers=4)
@@ -254,27 +255,27 @@ class FastNode2Vec(EmbeddingModel):
         return knn_from_emb(self.embedding, nodeset, k, self.sim_func)
 
 
-class Snore(EmbeddingModel):
-    """Symbolic (explainable) random walk based node embedding."""
+# class Snore(EmbeddingModel):
+#     """Symbolic (explainable) random walk based node embedding."""
 
-    def __init__(self):
-        self.model = SNoRe(dimension=256, fixed_dimension=True)
-        self.embedding = None
-        self.sim_func = nn.CosineSimilarity(dim=1)
+#     def __init__(self):
+#         self.model = SNoRe(dimension=256, fixed_dimension=True)
+#         self.embedding = None
+#         self.sim_func = nn.CosineSimilarity(dim=1)
 
-    def train(self, g, ids, train_set, test_set, features):
-        adj = g.adj(scipy_fmt="csr")
-        sparse_emb = self.model.embed(adj)
-        print(sparse_emb.toarray().size)
-        self.embedding = torch.from_numpy(sparse_emb.toarray())[:len(ids), :]
-        print(self.embedding.shape)
-        #print(self.embedding[0:10,0:20])
+#     def train(self, g, ids, train_set, test_set, features):
+#         adj = g.adj(scipy_fmt="csr")
+#         sparse_emb = self.model.embed(adj)
+#         print(sparse_emb.toarray().size)
+#         self.embedding = torch.from_numpy(sparse_emb.toarray())[:len(ids), :]
+#         print(self.embedding.shape)
+#         #print(self.embedding[0:10,0:20])
 
-    def embed(self, nodeset):
-        return self.embedding[nodeset, :]
+#     def embed(self, nodeset):
+#         return self.embedding[nodeset, :]
 
-    def knn(self, nodeset, k):
-        return knn_from_emb(self.embedding, nodeset, k, self.sim_func)
+#     def knn(self, nodeset, k):
+#         return knn_from_emb(self.embedding, nodeset, k, self.sim_func)
 
 
 def _load_embeddings(ids, load_dir):
@@ -446,9 +447,9 @@ def project_bipartite_graph(bottom_nodes, dgl_g=None, nx_g=None, adj_mat=None):
         print(nx_g.nodes())
         adj_mat = nx.adjacency_matrix(nx_g)
 
-    nx_graph = nx.from_scipy_sparse_matrix(adj_mat)
+    nx_graph = nx.from_scipy_sparse_array(adj_mat)
     proj_graph = bipartite.weighted_projected_graph(nx_graph, bottom_nodes)
-    proj_adj_mat = nx.to_scipy_sparse_matrix(proj_graph, nodelist=None, format="csr")
+    proj_adj_mat = nx.to_scipy_sparse_array(proj_graph, nodelist=None, format="csr")
     
     return proj_adj_mat
 

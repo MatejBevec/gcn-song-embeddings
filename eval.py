@@ -25,7 +25,7 @@ from spotify_graph import SpotifyGraph
 #import pinsage_training as pst
 
 from baselines import PredictionModel, EmbeddingModel, \
-    Snore, PersPageRank, EmbLoader, Random, Preferential, JaccardIndex, TrackTrackCF
+    PersPageRank, EmbLoader, Random, Preferential, JaccardIndex, TrackTrackCF
 from baselines import to_track_track_matrix
 
 PRECOMP_K = 1000
@@ -41,10 +41,10 @@ MODELS = {
     #"JaccardIndex": JaccardIndex(),
     #"PinSageMicroOpenl3": EmbLoader("runs/micro_openl3/emb"),
     #"PinSageMicroVggish": EmbLoader("runs/micro_vggish/emb"),
-    "OpenL3": EmbLoader("dataset_micro/features_openl3"),
+    #"OpenL3": EmbLoader("dataset_micro/features_openl3"),
     #"Vggish": EmbLoader("dataset_micro/features_vggish2"),
     #"MusicNN": EmbLoader("dataset_micro/features_musicnn"),
-    "Random": Random()
+    #"Random": Random()
 }
 
 # GOTTA TRAIN FIRST!
@@ -379,6 +379,8 @@ def low_degree_accuracy(knn_mat, g, test_positives, K, degree_thr, acc_func, que
     queries = torch.arange(0, knn_mat.shape[0], dtype=torch.int64) if not queries else queries
     sel_indices = queries[g.in_degrees(queries) <= degree_thr]
 
+    if len(sel_indices) == 0: return 0
+
     pos_selection = np.array([test_positives[i, 0] in sel_indices for i in range(test_positives.shape[0])])
     low_deg_positives = test_positives[pos_selection, :]
 
@@ -408,7 +410,7 @@ def low_co_accuracy(knn_mat, g, test_positives, K, co_thr, acc_func, queries=Non
 
 # PRESENT RESULTS
 
-def compute_results_table(knn_dict, test_positives, g, times=True):
+def compute_results_table(knn_dict, test_positives, g, times=True, degree_thr=1):
     
     k_levels = [10, 100, 500]
     results = {}
@@ -425,7 +427,7 @@ def compute_results_table(knn_dict, test_positives, g, times=True):
         model_results["mrr"] = mrr(knn_mat, test_positives, 1000, 1)
 
         model_results["low-degree accuracy"] = low_degree_accuracy(
-            knn_mat, g, test_positives, 1000, degree_thr=1, acc_func=mrr)
+            knn_mat, g, test_positives, 1000, degree_thr=degree_thr, acc_func=mrr)
         results[model] = model_results
 
         model_results["low-co accuracy"] = low_co_accuracy(
